@@ -1,0 +1,39 @@
+-------- Statement of Completenesss --------
+
+Fill the below for each section with C for complete and P for partially complete.
+For example: A[C]
+
+A [ ]
+B [ ]
+C [ ]
+D [ ]
+E [ ] 
+
+Comments:
+
+--------------------------------------------
+
+
+-------- Statement of Contribution --------
+
+Ignore this if in a group of 1.
+
+Fill the below with your student IDs, names, and contribution description.
+
+ID:
+name:
+contribution:
+
+ID:
+name:
+contribution:
+
+ID:
+name:
+contribution:
+
+Comments:
+
+--------------------------------------------
+
+
