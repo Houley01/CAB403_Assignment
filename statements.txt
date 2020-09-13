@@ -3,9 +3,9 @@
 Fill the below for each section with C for complete and P for partially complete.
 For example: A[C]
 
-A [ ]
+A [C]
 B [ ]
-C [ ]
+C [C]
 D [ ]
 E [ ] 
 
@@ -21,8 +21,8 @@ Ignore this if in a group of 1.
 Fill the below with your student IDs, names, and contribution description.
 
 ID:
-name:
-contribution:
+name: Joel Wilkinson
+contribution: Part A & C
 
 ID:
 name:

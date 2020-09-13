@@ -1,0 +1,6 @@
+gcc -o test_prog test_prog.c
+gcc -o overseer overseer.c -pthread
+gcc -o client client.c
+
+./overseer 12345
+./client localhost 12345 test_prog one two three four
