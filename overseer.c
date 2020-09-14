@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include "helpers.h"
 
 #define NUM_HANDLER_THREADS 5
 #define NUM_OF_REQUESTS 10
@@ -18,9 +19,6 @@
 pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
-
-// Create a time construct that will be used to print information to stdout
-time_t t;
 
 struct request
 {
@@ -103,7 +101,7 @@ int handle_request(struct request *a_request, int thread_id)
     // Debug
     printf("Thread %d handled request %d\n", thread_id, a_request->number);
 
-    fprintf(stdout, "%d-%02d-%02d %02d:%02d:%02d - Attempting to execute '%s'...\n", localtime(&t)->tm_year + 1900, localtime(&t)->tm_mon + 1, localtime(&t)->tm_mday, localtime(&t)->tm_hour, localtime(&t)->tm_min, localtime(&t)->tm_sec, a_request->program);
+    fprintf(stdout, "%s - Attempting to execute '%s'...\n", timestamp(), a_request->program);
 
     // retVal will contain the return value '-1' if execlp couldn't execute the program
     int retVal;
@@ -128,12 +126,12 @@ int handle_request(struct request *a_request, int thread_id)
         // If the value returned was '-1', we know that the program had failed to execute! Otherwise, program executed successfully
         if (retVal == -1)
         {
-            fprintf(stdout, "%d-%02d-%02d %02d:%02d:%02d - Could not execute '%s'\n", localtime(&t)->tm_year + 1900, localtime(&t)->tm_mon + 1, localtime(&t)->tm_mday, localtime(&t)->tm_hour, localtime(&t)->tm_min, localtime(&t)->tm_sec, a_request->program);
+            fprintf(stdout, "%s - Could not execute '%s'\n", timestamp(), a_request->program);
         }
         else
         {
-            fprintf(stdout, "%d-%02d-%02d %02d:%02d:%02d - '%s' has been executed with PID %d\n", localtime(&t)->tm_year + 1900, localtime(&t)->tm_mon + 1, localtime(&t)->tm_mday, localtime(&t)->tm_hour, localtime(&t)->tm_min, localtime(&t)->tm_sec, a_request->program, pid);
-            fprintf(stdout, "%d-%02d-%02d %02d:%02d:%02d - PID %d has terminated with status code %d\n", localtime(&t)->tm_year + 1900, localtime(&t)->tm_mon + 1, localtime(&t)->tm_mday, localtime(&t)->tm_hour, localtime(&t)->tm_min, localtime(&t)->tm_sec, pid, WEXITSTATUS(status));
+            fprintf(stdout, "%s - '%s' has been executed with PID %d\n", timestamp(), a_request->program, pid);
+            fprintf(stdout, "%s - PID %d has terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(status));
         }
     }
     // If a fork could not be created, log to stderr
@@ -264,10 +262,8 @@ int main(int argc, char *argv[])
         }
         else
         {
-
-            t = time(&t);
             // Connection from a client was successfully made to the overseer!
-            fprintf(stdout, "%d-%02d-%02d %02d:%02d:%02d - Connection received from %s\n", localtime(&t)->tm_year + 1900, localtime(&t)->tm_mon + 1, localtime(&t)->tm_mday, localtime(&t)->tm_hour, localtime(&t)->tm_min, localtime(&t)->tm_sec, inet_ntoa(their_addr.sin_addr));
+            fprintf(stdout, "%s - Connection received from %s\n", timestamp(), inet_ntoa(their_addr.sin_addr));
 
             // Code below for getting the number of bytes being sent to know how many bytes to expect to receive
             // Doesn't really work for some reason though on the 2nd recv, further testing needed!
