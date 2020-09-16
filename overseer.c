@@ -16,6 +16,8 @@
 #define NUM_OF_REQUESTS 10
 #define MAX_BUFFER_SIZE 4096
 
+#define TERMINATE_TIMEOUT 10
+
 pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
@@ -96,6 +98,80 @@ struct request *get_request()
     return a_request;
 }
 
+void sig_handler(int sig)
+{
+    switch(sig)
+    {
+        case SIGINT:
+            // Todo: Put the kill switch in here
+            printf("Control ^C\n");
+            exit(1);
+        break;
+        default:
+            printf("%s - Got signal %d\n", timestamp(), sig);
+        break;
+    }
+}
+
+void sig_process(pid_t pid)
+{
+    int timeout = 0, kill_loop,wait = 0, sig_loop = 1, term;
+    int count = TERMINATE_TIMEOUT; // Need to update once part B is done
+    while(sig_loop)
+    {
+        printf("Loop: %d %d\n", timeout, sig_loop);
+        timeout++;
+        sleep(1);
+
+        if(timeout >= count)
+        {
+            if(timeout == count)        // Once we reach the threshold
+            {
+                // Ask nicely to close the program
+                term = kill(pid, SIGTERM);
+                printf("%s - sent SIGTERM to %d\n", timestamp(), pid);
+            }
+            // Term handling, term returns 0 on success, -1 on failure or an ERRNO
+            switch(term)
+            {
+                case 0: // Program terminated successfully.
+                    printf("%s - %d has been terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(SIGTERM));
+                    sig_loop = 0;
+                break;
+                // If for some reason we cannot terminate the program by asking nicely.
+                case -1:
+                    kill_loop = 1;
+                    while(kill_loop)
+                    {
+                        if(wait == 5)
+                        {
+                            printf("%s - sent SIGKILL to %d\n", timestamp(), pid);
+                            term = kill(pid, SIGKILL);
+                            kill_loop = 0;  // Exit this loop
+                            sig_loop = 0;    // Exit main loop
+                        }
+                        sleep(1);
+                        wait++;
+                    }
+                break;
+                // Error handling
+                case EPERM:
+                    perror("User not priviliged?...\n");
+                break;
+                case EINVAL:
+                    printf("Sig <%d>\n", SIGTERM); // Doubt we will ever encounter this error.
+                    perror("Invalid SIG value when attempting to terminate.\n");
+                break;
+                case ESRCH:
+                    printf("Pid <%d>\n", getpid());
+                    perror("Could not find PID of child process.\n");
+                break;
+            }
+        }
+    }
+}
+
+
 int handle_request(struct request *a_request, int thread_id)
 {
     // Debug
@@ -109,7 +185,6 @@ int handle_request(struct request *a_request, int thread_id)
 
     // Create a fork before calling execlp so we don't replace the overseer with the program the client wishes to run!
     pid_t pid = fork();
-
     // Fork was successfully executed!
     if (pid >= 0)
     {
@@ -119,9 +194,22 @@ int handle_request(struct request *a_request, int thread_id)
             // Run the program and check if execlp will return '-1' which will let the parent know if it failed
             retVal = execvp(a_request->program, a_request->args);
         }
-
+        else
+        {
+            // PART D
+            sig_process(pid);
+        }
+        
         // Waiting on the child!
         wait(&status);
+
+        // Todo
+        // Implement some code that calls back to 
+        // sig_process and kills the loop if program executed.
+        // - Attempted double pointers (in this func and out)
+        // - Alarm (Just won't work since we can't parse the pid)
+        // - wait doesn't work (kind of obvious since pointers dont)
+        // Need to find a solution that allows both the pid and the callback to modify the sig_loop variable to stop the loop.
 
         // If the value returned was '-1', we know that the program had failed to execute! Otherwise, program executed successfully
         if (retVal == -1)
@@ -144,7 +232,6 @@ int handle_request(struct request *a_request, int thread_id)
     close(a_request->fd);
     return 1;
 }
-
 void *handle_requests_loop(void *data)
 {
     struct request *a_request;
@@ -180,6 +267,7 @@ void *handle_requests_loop(void *data)
 
 int main(int argc, char *argv[])
 {
+    signal(SIGINT, sig_handler);
     // Setting up distributed system server
     if (argc != 2)
     {

@@ -18,9 +18,18 @@ int main(int argc, char *argv[])
     struct hostent *he;
     struct sockaddr_in their_addr; /* connector's address information */
 
+    if(argv[1] != NULL) // Need to check if the first arg is null before strcmp
+    {
+        if(strcmp(argv[1], "--help") == 0)
+        {
+            fprintf(stderr, "Usage: controller <address> <port> {[-o out_file] [-log log_file][-t seconds] <file> [arg...] | mem [pid] | memkill <percent>}\n");
+            exit(1);
+        }
+    }
+
     if (argc < 3)
     {
-        fprintf(stderr, "usage: client_hostname\n");
+        fprintf(stderr, "usage: <address> <port>\n");
         exit(1);
     }
 
@@ -43,11 +52,14 @@ int main(int argc, char *argv[])
 
     char args[MAX_BUFFER_SIZE];
 
+
     // Get all of the arguments for the program
-    for (int i = 4; i < argc; i++)
+    for (int i = 3; i < argc; i++)
     {
         strncat(args, argv[i], sizeof(argv[i]));
-        strncat(args, " ", 1);
+        printf("%d:%s\n", i,argv[i]);
+        printf("---------------\n");
+        strncat(args, " ", argc); // Doesn't actually matter what int value we put here (1 causes a warning though)=
     }
 
     // Open file stream test and passing it to Overseer (this is how we can write to a log file)

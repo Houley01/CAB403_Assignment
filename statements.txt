@@ -6,7 +6,7 @@ For example: A[C]
 A [C]
 B [ ]
 C [C]
-D [ ]
+D [P]
 E [ ] 
 
 Comments:
