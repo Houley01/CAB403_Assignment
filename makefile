@@ -19,8 +19,6 @@ run: overseer.c client.c
 	@gcc -o $(server) $(server).o $(helpers).o -pthread
 	@gcc -o $(client) $(client).c
 
-	@echo ./$(client) $(client_args) $(user_args)
-
 	@echo Opening $(server) in new terminal.
 	@gnome-terminal -q -e "sh -c './$(server) $(server_args) $(user_args); exec bash'"
 	@sleep 2
