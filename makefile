@@ -4,7 +4,7 @@ test = test_prog
 helpers = helpers
 
 server_args = 12345
-client_args = localhost 12345 test_prog one two three four
+client_args = localhost 12345 $(test) one two three four
 
 run: overseer.c client.c
 	@make clean

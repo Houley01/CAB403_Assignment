@@ -98,28 +98,13 @@ struct request *get_request()
     return a_request;
 }
 
-void sig_handler(int sig)
-{
-    switch(sig)
-    {
-        case SIGINT:
-            // Todo: Put the kill switch in here
-            printf("Control ^C\n");
-            exit(1);
-        break;
-        default:
-            printf("%s - Got signal %d\n", timestamp(), sig);
-        break;
-    }
-}
-
 void sig_process(pid_t pid)
 {
     int timeout = 0, kill_loop,wait = 0, sig_loop = 1, term;
     int count = TERMINATE_TIMEOUT; // Need to update once part B is done
     while(sig_loop)
     {
-        printf("Loop: %d %d\n", timeout, sig_loop);
+        // printf("Loop: %d %d\n", timeout, sig_loop);
         timeout++;
         sleep(1);
 
@@ -171,7 +156,6 @@ void sig_process(pid_t pid)
     }
 }
 
-
 int handle_request(struct request *a_request, int thread_id)
 {
     // Debug
@@ -185,6 +169,7 @@ int handle_request(struct request *a_request, int thread_id)
 
     // Create a fork before calling execlp so we don't replace the overseer with the program the client wishes to run!
     pid_t pid = fork();
+
     // Fork was successfully executed!
     if (pid >= 0)
     {
@@ -212,6 +197,11 @@ int handle_request(struct request *a_request, int thread_id)
         // Need to find a solution that allows both the pid and the callback to modify the sig_loop variable to stop the loop.
 
         // If the value returned was '-1', we know that the program had failed to execute! Otherwise, program executed successfully
+
+        // Waiting on the child!
+        wait(&status);
+
+        // If the value returned was '-1', we know that the program had failed to execute! Otherwise, program executed successfully
         if (retVal == -1)
         {
             fprintf(stdout, "%s - Could not execute '%s'\n", timestamp(), a_request->program);
@@ -232,6 +222,7 @@ int handle_request(struct request *a_request, int thread_id)
     close(a_request->fd);
     return 1;
 }
+
 void *handle_requests_loop(void *data)
 {
     struct request *a_request;
@@ -267,7 +258,6 @@ void *handle_requests_loop(void *data)
 
 int main(int argc, char *argv[])
 {
-    signal(SIGINT, sig_handler);
     // Setting up distributed system server
     if (argc != 2)
     {
