@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <string.h>
+#include <ctype.h>
 #include <netdb.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -11,10 +13,21 @@
 
 // #define PORT_NO 54321 /* PORT Number */
 #define MAX_BUFFER_SIZE 4096
+#define HELP_TEXT "\
+Usage: controller <address> <port> {[-o out_file] \
+[-log log_file][-t seconds] <file> [arg...] | mem \
+[pid] | memkill <percent>}\n"
+
+void stderr_help_text_exit1() {
+    fprintf(stderr, HELP_TEXT);
+    exit(1);
+} 
 
 int main(int argc, char *argv[])
 {
     int sockfd, numbytes;
+    bool argument_safe = true;
+    int PORT_NO;
     struct hostent *he;
     struct sockaddr_in their_addr; /* connector's address information */
 
@@ -22,18 +35,34 @@ int main(int argc, char *argv[])
     {
         if(strcmp(argv[1], "--help") == 0)
         {
-            fprintf(stderr, "Usage: controller <address> <port> {[-o out_file] [-log log_file][-t seconds] <file> [arg...] | mem [pid] | memkill <percent>}\n");
+            printf(HELP_TEXT);
             exit(1);
         }
-    }
-
+    } else if (argv[1] == NULL) // else if == to null
+    {
+        printf("NULL\n");
+        stderr_help_text_exit1();
+    } 
+    // Quit if args are less then 3
     if (argc < 3)
     {
-        fprintf(stderr, "usage: <address> <port>\n");
-        exit(1);
+        printf("Less then 3\n");
+        stderr_help_text_exit1();
     }
-
-    int PORT_NO = atoi(argv[2]);
+    
+    // Port Number Checking
+    for (int i = 0; argv[2][i] != '\0'; i++) {
+        if (!isdigit(argv[2][i]) != 0) {
+            argument_safe = false;
+            break; 
+        }
+    } 
+    if (argument_safe == false) {
+        printf("UNSAFE PORT NUMBER\n");
+        stderr_help_text_exit1();
+    } else {
+        PORT_NO = atoi(argv[2]);
+    }
 
     if ((he = gethostbyname(argv[1])) == NULL)
     { /* get the host info */
