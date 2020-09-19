@@ -362,6 +362,7 @@ int main(int argc, char *argv[])
                 perror("recv");
                 exit(1);
             }
+            // printf("Optional Args: %s\n");
 
                 char programBuffer[MAX_BUFFER_SIZE];
 

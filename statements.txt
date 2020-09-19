@@ -4,7 +4,7 @@ Fill the below for each section with C for complete and P for partially complete
 For example: A[C]
 
 A [C]
-B [ ]
+B [P]
 C [C]
 D [P]
 E [ ] 
@@ -25,12 +25,12 @@ name: Joel Wilkinson
 contribution: Part A & C
 
 ID:
-name:
-contribution:
+name: Brendan Freeman
+contribution: Part D
 
 ID:
-name:
-contribution:
+name: Ethan Houley
+contribution: Part B
 
 Comments:
 

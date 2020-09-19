@@ -80,23 +80,28 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    char *optionalArgs[3];
-    // Check for -o out_file and -log log_file flags
+    char optionalArgs[MAX_BUFFER_SIZE];
+    memset(&optionalArgs, 0, sizeof(optionalArgs));
+    // Loop through the arguments to find optional Arguments  
+    // This include '-o' '-log' '-t' 'mem' 'memkill' Arguments 
     for (int i = 2; i < argc; i++) {
         if (strcmp("-o", argv[i]) == 0) {
-            // OUTPUT_ARG_NUM = i;
-            optionalArgs[0] = argv[i+1];
-            // printf("found -o Arg : %s\n", optionalArgs[0]);
-            if (program_arg < i+2) 
+            strcat(optionalArgs, argv[i]);
+            strcat(optionalArgs, " ");
+            strcat(optionalArgs, argv[i+1]);
+            strcat(optionalArgs, " ");
+
+            if (program_arg < i + 2)
             {
                 program_arg = i+2;
             }
         }
         else if (strcmp("-log", argv[i]) == 0)
         {
-            // LOG_ARG_NUM = i;
-            optionalArgs[1] = argv[i + 1];
-            // printf("found -log Arg : %s\n", optionalArgs[1]);
+            strcat(optionalArgs, argv[i]);
+            strcat(optionalArgs, " ");
+            strcat(optionalArgs, argv[i + 1]);
+            strcat(optionalArgs, " ");
             if (program_arg < i + 2)
             {
                 program_arg = i + 2;
@@ -104,20 +109,17 @@ int main(int argc, char *argv[])
         }
         // else if (strcmp("-t", argv[i]) == 0)
         // {
-        //     /* code */
+        //     strcat(optionalArgs, argv[i]);
+        //     strcat(optionalArgs, " ");
+        //     strcat(optionalArgs, argv[i + 1]);
+        //     strcat(optionalArgs, " ");
         // }
-        
     }
-
-
 
     // Argument contains the program the client wishes to run
     char *program = argv[program_arg];
 
     char args[MAX_BUFFER_SIZE];
-
-    //     0       1       2      3   4    5    6
-    // localhost 12345 test_prog one two three four
 
     // Get all of the arguments for the program
     for (int i = program_arg; i < argc; i++)
@@ -157,7 +159,6 @@ int main(int argc, char *argv[])
         // send(sockfd, &programSize, sizeof(program), 0);
         // fflush(stdout);
         // if (optionalArgs[0] != NULL || optionalArgs[3] != NULL || optionalArgs[3] != NULL){
-            printf("%s \n", optionalArgs);
         send(sockfd, optionalArgs, MAX_BUFFER_SIZE, 0);
         fflush(stdout);
 
