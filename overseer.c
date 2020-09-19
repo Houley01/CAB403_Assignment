@@ -354,13 +354,21 @@ int main(int argc, char *argv[])
             //     exit(1);
             // }
             // int programBytes = ntohs(buffer);
-
-            char programBuffer[MAX_BUFFER_SIZE];
-
-            if (recv(new_fd, &programBuffer, MAX_BUFFER_SIZE, 0) == -1)
+            
+            // Output file or Log File or Other optional Arguments
+            char optionalArgs[MAX_BUFFER_SIZE];
+            if (recv(new_fd, &optionalArgs, MAX_BUFFER_SIZE, 0) == -1)
             {
                 perror("recv");
                 exit(1);
+            }
+
+                char programBuffer[MAX_BUFFER_SIZE];
+
+                if (recv(new_fd, &programBuffer, MAX_BUFFER_SIZE, 0) == -1)
+                {
+                    perror("recv");
+                    exit(1);
             }
 
             programBuffer[MAX_BUFFER_SIZE] = '\0';

@@ -12,7 +12,7 @@ build: clean build_server build_client
 rebuild: clean build
 
 test_client: build_client
-	./$(client) localhost aaaa $(test)
+	./$(client) localhost 12345 -o outputfile -log logfile $(test) one two three four
 
 run_client: build_client
 	./$(client) $(client_args) $(user_args)

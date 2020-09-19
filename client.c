@@ -28,6 +28,9 @@ int main(int argc, char *argv[])
     int sockfd, numbytes;
     bool argument_safe = true;
     int PORT_NO;
+    // int OUTPUT_ARG_NUM = 0;
+    // int LOG_ARG_NUM = 0;
+    int program_arg = 3;
     struct hostent *he;
     struct sockaddr_in their_addr; /* connector's address information */
 
@@ -40,34 +43,35 @@ int main(int argc, char *argv[])
         }
     } else if (argv[1] == NULL) // else if == to null
     {
-        printf("NULL\n");
+        // printf("NULL\n");
         stderr_help_text_exit1();
     } 
+
     // Quit if args are less then 3
     if (argc < 3)
     {
         printf("Less then 3\n");
         stderr_help_text_exit1();
     }
-    
+
+    // Hostname Checking
+    if ((he = gethostbyname(argv[1])) == NULL)
+    { /* get the host info */
+        herror("gethostbyname");
+        stderr_help_text_exit1();
+    }
+
     // Port Number Checking
     for (int i = 0; argv[2][i] != '\0'; i++) {
-        if (!isdigit(argv[2][i]) != 0) {
+        if (isdigit(argv[2][i]) == 0) {
             argument_safe = false;
             break; 
         }
     } 
     if (argument_safe == false) {
-        printf("UNSAFE PORT NUMBER\n");
         stderr_help_text_exit1();
     } else {
         PORT_NO = atoi(argv[2]);
-    }
-
-    if ((he = gethostbyname(argv[1])) == NULL)
-    { /* get the host info */
-        herror("gethostbyname");
-        exit(1);
     }
 
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
@@ -76,14 +80,47 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    char *optionalArgs[3];
+    // Check for -o out_file and -log log_file flags
+    for (int i = 2; i < argc; i++) {
+        if (strcmp("-o", argv[i]) == 0) {
+            // OUTPUT_ARG_NUM = i;
+            optionalArgs[0] = argv[i+1];
+            // printf("found -o Arg : %s\n", optionalArgs[0]);
+            if (program_arg < i+2) 
+            {
+                program_arg = i+2;
+            }
+        }
+        else if (strcmp("-log", argv[i]) == 0)
+        {
+            // LOG_ARG_NUM = i;
+            optionalArgs[1] = argv[i + 1];
+            // printf("found -log Arg : %s\n", optionalArgs[1]);
+            if (program_arg < i + 2)
+            {
+                program_arg = i + 2;
+            }
+        }
+        // else if (strcmp("-t", argv[i]) == 0)
+        // {
+        //     /* code */
+        // }
+        
+    }
+
+
+
     // Argument contains the program the client wishes to run
-    char *program = argv[3];
+    char *program = argv[program_arg];
 
     char args[MAX_BUFFER_SIZE];
 
+    //     0       1       2      3   4    5    6
+    // localhost 12345 test_prog one two three four
 
     // Get all of the arguments for the program
-    for (int i = 3; i < argc; i++)
+    for (int i = program_arg; i < argc; i++)
     {
         strncat(args, argv[i], sizeof(argv[i]));
         printf("%d:%s\n", i,argv[i]);
@@ -119,6 +156,10 @@ int main(int argc, char *argv[])
         //uint16_t programSize = htons(sizeof(program));
         // send(sockfd, &programSize, sizeof(program), 0);
         // fflush(stdout);
+        // if (optionalArgs[0] != NULL || optionalArgs[3] != NULL || optionalArgs[3] != NULL){
+            printf("%s \n", optionalArgs);
+        send(sockfd, optionalArgs, MAX_BUFFER_SIZE, 0);
+        fflush(stdout);
 
         send(sockfd, program, MAX_BUFFER_SIZE, 0);
         fflush(stdout);
