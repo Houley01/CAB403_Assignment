@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include <stdbool.h>
 #include "helpers.h"
 
 #define NUM_HANDLER_THREADS 5
@@ -21,6 +22,8 @@
 pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
+bool LOGFILE = false;
+bool OUTFILE = false;
 
 struct request
 {
@@ -256,6 +259,66 @@ void *handle_requests_loop(void *data)
     }
 }
 
+void optional_args(int new_fd)
+{
+
+    // char **args = NULL;
+    // char *p = strtok(argsBuffer, " ");
+    int spaces = 0;
+
+    // while (p)
+    // {
+    //     spaces++;
+    //     args = realloc(args, sizeof(char *) * spaces);
+    //     if (args == NULL)
+    //     {
+    //         // Break out if realloc fails. Probably will need to set the args list to NULL to send zero args for the sake of it I guess
+    //         break;
+    //     }
+    //     args[spaces - 1] = p;
+    //     p = strtok(NULL, " ");
+    // }
+
+    // Output file or Log File or Other optional Arguments
+    char optionalArgs[MAX_BUFFER_SIZE];
+    if (recv(new_fd, &optionalArgs, MAX_BUFFER_SIZE, 0) == -1)
+    {
+        perror("recv");
+        exit(1);
+    }
+    optionalArgs[MAX_BUFFER_SIZE] = '\0';
+
+    if (!optionalArgs[0] == 0) {
+        // printf("%s", optionalArgs);
+
+        char **out_log_file = NULL;
+        // printf("Optional Args: %s\n");
+        char *token = strtok(optionalArgs, " ");
+        while (token != NULL)
+        {
+        spaces++;
+            out_log_file = realloc(out_log_file, sizeof(char *) * spaces);
+            out_log_file[spaces - 1] = token;
+            token = strtok(NULL, " ");
+        }
+        if (!strcmp(out_log_file[1], "0") == 0)
+        {
+            printf("Contains A Outfile: ");
+            printf("%s \n", out_log_file[1]);
+            OUTFILE = true;
+        }
+        if (!strcmp(out_log_file[3], "0") == 0)
+        {
+            printf("Contains A Log File: ");
+            printf("%s \n", out_log_file[3]);
+            LOGFILE= true;
+        }
+    } else 
+    {
+        printf("NULL\n");
+    }
+}
+
 int main(int argc, char *argv[])
 {
     // Setting up distributed system server
@@ -354,22 +417,14 @@ int main(int argc, char *argv[])
             //     exit(1);
             // }
             // int programBytes = ntohs(buffer);
-            
-            // Output file or Log File or Other optional Arguments
-            char optionalArgs[MAX_BUFFER_SIZE];
-            if (recv(new_fd, &optionalArgs, MAX_BUFFER_SIZE, 0) == -1)
+            optional_args(new_fd);
+
+            char programBuffer[MAX_BUFFER_SIZE];
+
+            if (recv(new_fd, &programBuffer, MAX_BUFFER_SIZE, 0) == -1)
             {
                 perror("recv");
                 exit(1);
-            }
-            // printf("Optional Args: %s\n");
-
-                char programBuffer[MAX_BUFFER_SIZE];
-
-                if (recv(new_fd, &programBuffer, MAX_BUFFER_SIZE, 0) == -1)
-                {
-                    perror("recv");
-                    exit(1);
             }
 
             programBuffer[MAX_BUFFER_SIZE] = '\0';
@@ -380,7 +435,6 @@ int main(int argc, char *argv[])
                 perror("recv");
                 exit(1);
             }
-
             argsBuffer[MAX_BUFFER_SIZE] = '\0';
 
             // Below splits argsBuffer into substrings from it's original string (args come from client as one string)
