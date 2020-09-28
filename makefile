@@ -1,6 +1,6 @@
 server = overseer
 client = client
-test = test_prog
+test = ./test_prog
 helpers = helpers
 
 server_args = 12345
@@ -30,7 +30,7 @@ build_server:
 	@echo Building server 
 	gcc -c $(helpers).c
 	gcc -c $(server).c
-	gcc -o $(server) $(server).o $(helpers).o -pthread
+	gcc -g -o $(server) $(server).o $(helpers).o -pthread
 
 # run: overseer.c client.c
 # 	@make clean

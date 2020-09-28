@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
+
 // #define PORT_NO 54321 /* PORT Number */
 #define MAX_BUFFER_SIZE 4096
 #define HELP_TEXT "\
@@ -80,28 +81,47 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    char optionalArgs[MAX_BUFFER_SIZE];
-    memset(&optionalArgs, 0, sizeof(optionalArgs));
+    char argsOutFile[MAX_BUFFER_SIZE];
+    memset(&argsOutFile, 0, sizeof(argsOutFile));
+
+    char argsLogFile[MAX_BUFFER_SIZE];
+    memset(&argsLogFile, 0, sizeof(argsLogFile));
+
+    // char argsTimeFile[MAX_BUFFER_SIZE];
+    // memset(&argsTimeFile, 0, sizeof(argsTimeFile));
     // Loop through the arguments to find optional Arguments  
     // This include '-o' '-log' '-t' 'mem' 'memkill' Arguments 
     for (int i = 2; i < argc; i++) {
         if (strcmp("-o", argv[i]) == 0) {
-            strcat(optionalArgs, argv[i]);
-            strcat(optionalArgs, " ");
-            strcat(optionalArgs, argv[i+1]);
-            strcat(optionalArgs, " ");
-
+            // strcat(optionalArgs, argv[i]);
+            // strcat(optionalArgs, " ");
+            // strcat(optionalArgs, argv[i+1]);
+            // strcat(optionalArgs, " ");
             if (program_arg < i + 2)
             {
                 program_arg = i+2;
             }
+
+            strcat(argsOutFile, argv[i]);
+            strcat(argsOutFile, " ");
+            strcat(argsOutFile, argv[i + 1]);
+            // strcat(argsOutFile, " ");
         }
         else if (strcmp("-log", argv[i]) == 0)
         {
-            strcat(optionalArgs, argv[i]);
-            strcat(optionalArgs, " ");
-            strcat(optionalArgs, argv[i + 1]);
-            strcat(optionalArgs, " ");
+                // strcat(optionalArgs, argv[i]);
+                // strcat(optionalArgs, " ");
+                // strcat(optionalArgs, argv[i + 1]);
+                // strcat(optionalArgs, " ");
+                // if (program_arg < i + 2)
+                // {
+                //     program_arg = i + 2;
+                // }
+
+            strcat(argsLogFile, argv[i]);
+            strcat(argsLogFile, " ");
+            strcat(argsLogFile, argv[i + 1]);
+            // strcat(argsLogFile, " ");
             if (program_arg < i + 2)
             {
                 program_arg = i + 2;
@@ -109,10 +129,10 @@ int main(int argc, char *argv[])
         }
         // else if (strcmp("-t", argv[i]) == 0)
         // {
-        //     strcat(optionalArgs, argv[i]);
-        //     strcat(optionalArgs, " ");
-        //     strcat(optionalArgs, argv[i + 1]);
-        //     strcat(optionalArgs, " ");
+        //     strcat(argsTimeFile, argv[i]);
+        //     strcat(argsTimeFile, " ");
+        //     strcat(argsTimeFile, argv[i + 1]);
+        //     strcat(argsTimeFile, " ");
         // }
     }
 
@@ -159,11 +179,21 @@ int main(int argc, char *argv[])
         // send(sockfd, &programSize, sizeof(program), 0);
         // fflush(stdout);
         // if (optionalArgs[0] != NULL || optionalArgs[3] != NULL || optionalArgs[3] != NULL){
-        send(sockfd, optionalArgs, MAX_BUFFER_SIZE, 0);
+        
+        // Output file sending data
+        send(sockfd, argsOutFile, MAX_BUFFER_SIZE, 0);
         fflush(stdout);
+        // Log file sending data
+        send(sockfd, argsLogFile, MAX_BUFFER_SIZE, 0);
+        fflush(stdout);
+
+        // send(sockfd, argsTimeFile, MAX_BUFFER_SIZE, 0);
+        // fflush(stdout);
 
         send(sockfd, program, MAX_BUFFER_SIZE, 0);
         fflush(stdout);
+        // Sleep so the Overseer gets a chance to recive the icoming string. 
+        sleep(1);
 
         send(sockfd, args, MAX_BUFFER_SIZE, 0);
         fflush(stdout);

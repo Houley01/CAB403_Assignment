@@ -22,6 +22,9 @@
 pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
+
+char **outfileArg = NULL;
+char **logfileArg = NULL;
 bool LOGFILE = false;
 bool OUTFILE = false;
 
@@ -261,61 +264,65 @@ void *handle_requests_loop(void *data)
 
 void optional_args(int new_fd)
 {
-
-    // char **args = NULL;
-    // char *p = strtok(argsBuffer, " ");
-    int spaces = 0;
-
-    // while (p)
-    // {
-    //     spaces++;
-    //     args = realloc(args, sizeof(char *) * spaces);
-    //     if (args == NULL)
-    //     {
-    //         // Break out if realloc fails. Probably will need to set the args list to NULL to send zero args for the sake of it I guess
-    //         break;
-    //     }
-    //     args[spaces - 1] = p;
-    //     p = strtok(NULL, " ");
-    // }
-
-    // Output file or Log File or Other optional Arguments
-    char optionalArgs[MAX_BUFFER_SIZE];
-    if (recv(new_fd, &optionalArgs, MAX_BUFFER_SIZE, 0) == -1)
+    int index = 0;
+    char temp[MAX_BUFFER_SIZE];
+    if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
     {
         perror("recv");
         exit(1);
     }
-    optionalArgs[MAX_BUFFER_SIZE] = '\0';
+    temp[MAX_BUFFER_SIZE-1] = 0;
 
-    if (!optionalArgs[0] == 0) {
-        // printf("%s", optionalArgs);
-
-        char **out_log_file = NULL;
-        // printf("Optional Args: %s\n");
-        char *token = strtok(optionalArgs, " ");
+    if (temp[0] != '\0')
+    {
+        char *token = strtok(temp, " ");
         while (token != NULL)
         {
-        spaces++;
-            out_log_file = realloc(out_log_file, sizeof(char *) * spaces);
-            out_log_file[spaces - 1] = token;
+            outfileArg = realloc(outfileArg, sizeof(char *) * index);
+            outfileArg[index] = token;
             token = strtok(NULL, " ");
+            index++;
         }
-        if (!strcmp(out_log_file[1], "0") == 0)
-        {
-            printf("Contains A Outfile: ");
-            printf("%s \n", out_log_file[1]);
-            OUTFILE = true;
-        }
-        if (!strcmp(out_log_file[3], "0") == 0)
-        {
-            printf("Contains A Log File: ");
-            printf("%s \n", out_log_file[3]);
-            LOGFILE= true;
-        }
-    } else 
+        // printf("%s %s\n", outfileArg[0] outfileArg[1]);
+        OUTFILE = true;
+        outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
+        outfileArg[index] = 0;
+    }
+    else {
+        // printf("NULL\n");
+        OUTFILE = false;
+    }
+    // Log FILE 
+    index = 0;
+    temp[0] = '\0';
+
+    if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
     {
-        printf("NULL\n");
+        perror("recv");
+        exit(1);
+    }
+    temp[MAX_BUFFER_SIZE] = 0;
+
+    if (temp[0] != '\0')
+    {
+        // Take the first char to SPACE, then place the string into a char[]
+        char *token = strtok(temp, " ");
+        while (token != NULL)
+        {
+            logfileArg = realloc(logfileArg, sizeof(char *) * index);
+            logfileArg[index] = token;
+            token = strtok(NULL, " ");
+            index++;
+        }
+        // printf("%s %s\n", logfileArg[0], logfileArg[1]);
+        LOGFILE = true;
+        logfileArg = realloc(logfileArg, sizeof(char *) * (index + 1));
+        logfileArg[index] = 0;
+    }
+    else
+    {
+        // printf("NULL\n");
+        LOGFILE = false;
     }
 }
 
@@ -417,7 +424,11 @@ int main(int argc, char *argv[])
             //     exit(1);
             // }
             // int programBytes = ntohs(buffer);
+       
             optional_args(new_fd);
+            if (LOGFILE) {
+                freopen(logfileArg[1], "a+", stdout);
+            }
 
             char programBuffer[MAX_BUFFER_SIZE];
 
@@ -426,7 +437,6 @@ int main(int argc, char *argv[])
                 perror("recv");
                 exit(1);
             }
-
             programBuffer[MAX_BUFFER_SIZE] = '\0';
 
             char argsBuffer[MAX_BUFFER_SIZE];
@@ -442,7 +452,7 @@ int main(int argc, char *argv[])
             char *p = strtok(argsBuffer, " ");
             int spaces = 0;
 
-            while (p)
+            while (p != NULL)
             {
                 spaces++;
                 args = realloc(args, sizeof(char *) * spaces);
