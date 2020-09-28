@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include <stdbool.h>
 #include "helpers.h"
 
 #define NUM_HANDLER_THREADS 5
@@ -21,6 +22,11 @@
 pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
+
+char **outfileArg = NULL;
+char **logfileArg = NULL;
+bool LOGFILE = false;
+bool OUTFILE = false;
 
 struct request
 {
@@ -256,6 +262,70 @@ void *handle_requests_loop(void *data)
     }
 }
 
+void optional_args(int new_fd)
+{
+    int index = 0;
+    char temp[MAX_BUFFER_SIZE];
+    if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
+    {
+        perror("recv");
+        exit(1);
+    }
+    temp[MAX_BUFFER_SIZE-1] = 0;
+
+    if (temp[0] != '\0')
+    {
+        char *token = strtok(temp, " ");
+        while (token != NULL)
+        {
+            outfileArg = realloc(outfileArg, sizeof(char *) * index);
+            outfileArg[index] = token;
+            token = strtok(NULL, " ");
+            index++;
+        }
+        // printf("%s %s\n", outfileArg[0] outfileArg[1]);
+        OUTFILE = true;
+        outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
+        outfileArg[index] = 0;
+    }
+    else {
+        // printf("NULL\n");
+        OUTFILE = false;
+    }
+    // Log FILE 
+    index = 0;
+    temp[0] = '\0';
+
+    if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
+    {
+        perror("recv");
+        exit(1);
+    }
+    temp[MAX_BUFFER_SIZE] = 0;
+
+    if (temp[0] != '\0')
+    {
+        // Take the first char to SPACE, then place the string into a char[]
+        char *token = strtok(temp, " ");
+        while (token != NULL)
+        {
+            logfileArg = realloc(logfileArg, sizeof(char *) * index);
+            logfileArg[index] = token;
+            token = strtok(NULL, " ");
+            index++;
+        }
+        // printf("%s %s\n", logfileArg[0], logfileArg[1]);
+        LOGFILE = true;
+        logfileArg = realloc(logfileArg, sizeof(char *) * (index + 1));
+        logfileArg[index] = 0;
+    }
+    else
+    {
+        // printf("NULL\n");
+        LOGFILE = false;
+    }
+}
+
 int main(int argc, char *argv[])
 {
     // Setting up distributed system server
@@ -354,6 +424,11 @@ int main(int argc, char *argv[])
             //     exit(1);
             // }
             // int programBytes = ntohs(buffer);
+       
+            optional_args(new_fd);
+            if (LOGFILE) {
+                freopen(logfileArg[1], "a+", stdout);
+            }
 
             char programBuffer[MAX_BUFFER_SIZE];
 
@@ -362,7 +437,6 @@ int main(int argc, char *argv[])
                 perror("recv");
                 exit(1);
             }
-
             programBuffer[MAX_BUFFER_SIZE] = '\0';
 
             char argsBuffer[MAX_BUFFER_SIZE];
@@ -371,7 +445,6 @@ int main(int argc, char *argv[])
                 perror("recv");
                 exit(1);
             }
-
             argsBuffer[MAX_BUFFER_SIZE] = '\0';
 
             // Below splits argsBuffer into substrings from it's original string (args come from client as one string)
@@ -379,7 +452,7 @@ int main(int argc, char *argv[])
             char *p = strtok(argsBuffer, " ");
             int spaces = 0;
 
-            while (p)
+            while (p != NULL)
             {
                 spaces++;
                 args = realloc(args, sizeof(char *) * spaces);

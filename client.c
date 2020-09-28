@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
+
 // #define PORT_NO 54321 /* PORT Number */
 #define MAX_BUFFER_SIZE 4096
 #define HELP_TEXT "\
@@ -28,6 +29,9 @@ int main(int argc, char *argv[])
     int sockfd, numbytes;
     bool argument_safe = true;
     int PORT_NO;
+    // int OUTPUT_ARG_NUM = 0;
+    // int LOG_ARG_NUM = 0;
+    int program_arg = 3;
     struct hostent *he;
     struct sockaddr_in their_addr; /* connector's address information */
 
@@ -40,34 +44,35 @@ int main(int argc, char *argv[])
         }
     } else if (argv[1] == NULL) // else if == to null
     {
-        printf("NULL\n");
+        // printf("NULL\n");
         stderr_help_text_exit1();
     } 
+
     // Quit if args are less then 3
     if (argc < 3)
     {
         printf("Less then 3\n");
         stderr_help_text_exit1();
     }
-    
+
+    // Hostname Checking
+    if ((he = gethostbyname(argv[1])) == NULL)
+    { /* get the host info */
+        herror("gethostbyname");
+        stderr_help_text_exit1();
+    }
+
     // Port Number Checking
     for (int i = 0; argv[2][i] != '\0'; i++) {
-        if (!isdigit(argv[2][i]) != 0) {
+        if (isdigit(argv[2][i]) == 0) {
             argument_safe = false;
             break; 
         }
     } 
     if (argument_safe == false) {
-        printf("UNSAFE PORT NUMBER\n");
         stderr_help_text_exit1();
     } else {
         PORT_NO = atoi(argv[2]);
-    }
-
-    if ((he = gethostbyname(argv[1])) == NULL)
-    { /* get the host info */
-        herror("gethostbyname");
-        exit(1);
     }
 
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
@@ -76,14 +81,68 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    char argsOutFile[MAX_BUFFER_SIZE];
+    memset(&argsOutFile, 0, sizeof(argsOutFile));
+
+    char argsLogFile[MAX_BUFFER_SIZE];
+    memset(&argsLogFile, 0, sizeof(argsLogFile));
+
+    // char argsTimeFile[MAX_BUFFER_SIZE];
+    // memset(&argsTimeFile, 0, sizeof(argsTimeFile));
+    // Loop through the arguments to find optional Arguments  
+    // This include '-o' '-log' '-t' 'mem' 'memkill' Arguments 
+    for (int i = 2; i < argc; i++) {
+        if (strcmp("-o", argv[i]) == 0) {
+            // strcat(optionalArgs, argv[i]);
+            // strcat(optionalArgs, " ");
+            // strcat(optionalArgs, argv[i+1]);
+            // strcat(optionalArgs, " ");
+            if (program_arg < i + 2)
+            {
+                program_arg = i+2;
+            }
+
+            strcat(argsOutFile, argv[i]);
+            strcat(argsOutFile, " ");
+            strcat(argsOutFile, argv[i + 1]);
+            // strcat(argsOutFile, " ");
+        }
+        else if (strcmp("-log", argv[i]) == 0)
+        {
+                // strcat(optionalArgs, argv[i]);
+                // strcat(optionalArgs, " ");
+                // strcat(optionalArgs, argv[i + 1]);
+                // strcat(optionalArgs, " ");
+                // if (program_arg < i + 2)
+                // {
+                //     program_arg = i + 2;
+                // }
+
+            strcat(argsLogFile, argv[i]);
+            strcat(argsLogFile, " ");
+            strcat(argsLogFile, argv[i + 1]);
+            // strcat(argsLogFile, " ");
+            if (program_arg < i + 2)
+            {
+                program_arg = i + 2;
+            }
+        }
+        // else if (strcmp("-t", argv[i]) == 0)
+        // {
+        //     strcat(argsTimeFile, argv[i]);
+        //     strcat(argsTimeFile, " ");
+        //     strcat(argsTimeFile, argv[i + 1]);
+        //     strcat(argsTimeFile, " ");
+        // }
+    }
+
     // Argument contains the program the client wishes to run
-    char *program = argv[3];
+    char *program = argv[program_arg];
 
     char args[MAX_BUFFER_SIZE];
 
-
     // Get all of the arguments for the program
-    for (int i = 3; i < argc; i++)
+    for (int i = program_arg; i < argc; i++)
     {
         strncat(args, argv[i], sizeof(argv[i]));
         printf("%d:%s\n", i,argv[i]);
@@ -119,9 +178,22 @@ int main(int argc, char *argv[])
         //uint16_t programSize = htons(sizeof(program));
         // send(sockfd, &programSize, sizeof(program), 0);
         // fflush(stdout);
+        // if (optionalArgs[0] != NULL || optionalArgs[3] != NULL || optionalArgs[3] != NULL){
+        
+        // Output file sending data
+        send(sockfd, argsOutFile, MAX_BUFFER_SIZE, 0);
+        fflush(stdout);
+        // Log file sending data
+        send(sockfd, argsLogFile, MAX_BUFFER_SIZE, 0);
+        fflush(stdout);
+
+        // send(sockfd, argsTimeFile, MAX_BUFFER_SIZE, 0);
+        // fflush(stdout);
 
         send(sockfd, program, MAX_BUFFER_SIZE, 0);
         fflush(stdout);
+        // Sleep so the Overseer gets a chance to recive the icoming string. 
+        sleep(1);
 
         send(sockfd, args, MAX_BUFFER_SIZE, 0);
         fflush(stdout);

@@ -1,10 +1,11 @@
 server = overseer
 client = client
-test = test_prog
+test = ./test_prog
 helpers = helpers
 
 server_args = 12345
 client_args = localhost 12345 $(test) one two three four
+out_and_log = -o outputfile -log logfile
 
 build: clean build_server build_client
 	@gcc -o $(test) $(test).c
@@ -12,7 +13,7 @@ build: clean build_server build_client
 rebuild: clean build
 
 test_client: build_client
-	./$(client) localhost aaaa $(test)
+	./$(client) localhost 12345 $(out_and_log) $(test) one two three four
 
 run_client: build_client
 	./$(client) $(client_args) $(user_args)
@@ -29,7 +30,7 @@ build_server:
 	@echo Building server 
 	gcc -c $(helpers).c
 	gcc -c $(server).c
-	gcc -o $(server) $(server).o $(helpers).o -pthread
+	gcc -g -o $(server) $(server).o $(helpers).o -pthread
 
 # run: overseer.c client.c
 # 	@make clean
