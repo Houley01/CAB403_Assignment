@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 int main(int argc, char *argv[])
 {
@@ -8,7 +9,6 @@ int main(int argc, char *argv[])
     {
         printf("%s\n", argv[i]);
     }
-
     printf("-----------------\n");
-    return 5;
+    exit(5); // Exit status code
 }

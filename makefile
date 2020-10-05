@@ -57,4 +57,3 @@ clean:
 	@$(RM) $(client)
 	@$(RM) $(test)
 	@$(RM) *.o
-
