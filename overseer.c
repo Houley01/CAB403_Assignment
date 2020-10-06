@@ -13,6 +13,8 @@
 #include <stdbool.h>
 #include "helpers.h"
 
+
+
 #define NUM_HANDLER_THREADS 5
 #define NUM_OF_REQUESTS 10
 #define MAX_BUFFER_SIZE 4096
@@ -106,7 +108,11 @@ struct request *get_request()
 
 void exit_handler(int SIG)
 {
-    printf("%s - Control ^C\n", timestamp());
+    // TODO
+    // - Kill all children process here
+    // - Remove all allocated memory (if any)
+    
+    printf("%s - Exiting overseer due to: CTRL^C\n", timestamp());
     exit(0);
 }
 
@@ -130,15 +136,16 @@ int handle_request(struct request *a_request, int thread_id)
         if (pid == 0)
         {
             // Run the program and check if execlp will return '-1' which will let the parent know if it failed
+            // retVal = execvp(a_request->program, a_request->args);
             retVal = execvp(a_request->program, a_request->args);
         }
         else
         {
             pid_t ws = waitpid(pid, &status, WNOHANG);  // Current status of child (0 is running)
             
-            int count = 0, kill_loop,kill_count = 0, sig_loop = 1, term;
+            int count = 0, term;
             int timeout = TERMINATE_TIMEOUT; // Need to update once part B is done
-
+            // PART D
             while(!(ws = waitpid(pid, &status, WNOHANG)))
             {
                 if(count >= timeout)
@@ -153,24 +160,15 @@ int handle_request(struct request *a_request, int thread_id)
                     {
                         case 0: // Program terminated successfully.
                             printf("%s - %d has been terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(SIGTERM));
-                            sig_loop = 0;
                         break;
                         case -1: // If for some reason we cannot terminate the program by asking nicely.
-                            kill_loop = 1;
-                            while(kill_loop)
-                            {
-                                if(kill_count == 5)
-                                {
-                                    printf("%s - sent SIGKILL to %d\n", timestamp(), pid);
-                                    term = kill(pid, SIGKILL);
-                                }
-                                sleep(1);
-                                kill_count++;
-                            }
+                            sleep(5);
+                            printf("%s - sent SIGKILL to %d\n", timestamp(), pid);
+                            term = kill(pid, SIGKILL);
                         break;
                         // Error handling
                         case EPERM:
-                            perror("Not super-user?...\n");
+                            perror("Not root or super-user. (Please run under sudo).\n");
                         break;
                         case EINVAL:
                             printf("Sig <%d>\n", SIGTERM); // Doubt we will ever encounter this error.
@@ -182,14 +180,16 @@ int handle_request(struct request *a_request, int thread_id)
                         break;
                     }
                 }
-                sleep(1);
                 count++;
+                sleep(1);
             }
 
             // Logging
 
+             // Need to check signal to check WTERMSIG (best practice)
             if(!WIFEXITED(status) && WIFSIGNALED(status))
             {
+                // Making sure we somehow didn't mess up.
                 if(WTERMSIG(status) != SIGTERM && WTERMSIG(status) != SIGKILL)
                 {
                     if(retVal == -1)
@@ -203,9 +203,19 @@ int handle_request(struct request *a_request, int thread_id)
                     }
                 }
             }
+            // WIFEXITED returns true for exit(<1)
+            // (programmed executed sucessfully)
             else
             {
-                fprintf(stdout, "%s - Something unexpected happened while attempting to read the status of (pid): %d", timestamp(), pid);
+                if(retVal == -1)
+                {
+                    fprintf(stdout, "%s - Could not execute '%s'\n", timestamp(), a_request->program);
+                }
+                else
+                {
+                    fprintf(stdout, "%s - '%s' has been executed with PID %d\n", timestamp(), a_request->program, pid);
+                    fprintf(stdout, "%s - PID %d has terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(status));
+                }
             }
         }
     }
@@ -319,11 +329,11 @@ void optional_args(int new_fd)
 
 int main(int argc, char *argv[])
 {
-    signal(SIGINT, exit_handler);
+    signal(SIGINT, exit_handler); // PART D (Do not remove)
     // Setting up distributed system server
     if (argc != 2)
     {
-        perror("No port number supplied.");
+        perror("No port number supplied.\n");
         exit(1);
     }
 
