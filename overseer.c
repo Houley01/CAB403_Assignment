@@ -23,8 +23,10 @@ pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
 
+FILE *logfileOpen;
 char **outfileArg = NULL;
 char **logfileArg = NULL;
+int saveStdout;
 bool LOGFILE = false;
 bool OUTFILE = false;
 
@@ -183,7 +185,32 @@ int handle_request(struct request *a_request, int thread_id)
         if (pid == 0)
         {
             // Run the program and check if execlp will return '-1' which will let the parent know if it failed
-            retVal = execvp(a_request->program, a_request->args);
+            // NOTES:: TRY PRINTING THE CONTENT HERE TO FILE BEFORE THE PROGRAM GETS FORKED
+            if (LOGFILE) {
+                printf("LOGFILE BOOL: %i\n ",LOGFILE);
+                char tempOutLog[MAX_BUFFER_SIZE];
+                printf("LOGFILE TEMP OUT: %s\n ", tempOutLog);
+
+                logfileOpen = fopen(logfileArg[1], "a");
+
+                saveStdout = dup(1);
+                printf("STDOUT TEMP OUT: %d\n ", saveStdout);
+
+                dup2(logfileOpen, 1);
+
+                // logfileOpen = freopen(logfileArg[1], "a+", stdout);
+            }
+                retVal = execvp(a_request->program, a_request->args);
+                sleep(5);
+            if (LOGFILE)
+            {
+                dup2(saveStdout, 1);
+                fclose(logfileOpen);
+                LOGFILE = false;
+                logfileOpen=NULL;
+                logfileArg = '\0';
+            }
+            
         }
         else
         {
@@ -426,9 +453,6 @@ int main(int argc, char *argv[])
             // int programBytes = ntohs(buffer);
        
             optional_args(new_fd);
-            if (LOGFILE) {
-                freopen(logfileArg[1], "a+", stdout);
-            }
 
             char programBuffer[MAX_BUFFER_SIZE];
 
