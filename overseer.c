@@ -13,8 +13,6 @@
 #include <stdbool.h>
 #include "helpers.h"
 
-
-
 #define NUM_HANDLER_THREADS 5
 #define NUM_OF_REQUESTS 10
 #define MAX_BUFFER_SIZE 4096
@@ -25,10 +23,10 @@ pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
 
-char **outfileArg = NULL;
-char **logfileArg = NULL;
-bool LOGFILE = false;
-bool OUTFILE = false;
+// char **outfileArg = NULL;
+// char **logfileArg = NULL;
+// bool LOGFILE = false;
+// bool OUTFILE = false;
 
 struct request
 {
@@ -36,6 +34,8 @@ struct request
     int fd;
     char *program;
     char **args;
+    char **outfile;
+    char **logfile;
     struct request *next;
 };
 
@@ -46,6 +46,8 @@ void add_request(int request_num,
                  int fd,
                  char *program,
                  char **args,
+                 char **outfile,
+                 char **logfile,
                  pthread_mutex_t *p_mutex,
                  pthread_cond_t *p_cond_var)
 {
@@ -61,6 +63,8 @@ void add_request(int request_num,
     a_request->number = request_num;
     a_request->program = program;
     a_request->args = args;
+    a_request->outfile = outfile;
+    a_request->logfile = logfile;
     a_request->next = NULL;
 
     pthread_mutex_lock(p_mutex);
@@ -111,7 +115,7 @@ void exit_handler(int SIG)
     // TODO
     // - Kill all children process here
     // - Remove all allocated memory (if any)
-    
+
     printf("%s - Exiting overseer due to: CTRL^C\n", timestamp());
     exit(0);
 }
@@ -141,42 +145,42 @@ int handle_request(struct request *a_request, int thread_id)
         }
         else
         {
-            pid_t ws = waitpid(pid, &status, WNOHANG);  // Current status of child (0 is running)
-            
+            pid_t ws = waitpid(pid, &status, WNOHANG); // Current status of child (0 is running)
+
             int count = 0, term;
             int timeout = TERMINATE_TIMEOUT; // Need to update once part B is done
             // PART D
-            while(!(ws = waitpid(pid, &status, WNOHANG)))
+            while (!(ws = waitpid(pid, &status, WNOHANG)))
             {
-                if(count >= timeout)
+                if (count >= timeout)
                 {
-                    if(count == timeout)        // Once we reach the threshold
+                    if (count == timeout) // Once we reach the threshold
                     {
                         // Ask nicely to close the program
                         term = kill(pid, SIGTERM);
                         printf("%s - sent SIGTERM to %d\n", timestamp(), pid);
                     }
-                    switch(term)
+                    switch (term)
                     {
-                        case 0: // Program terminated successfully.
-                            printf("%s - %d has been terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(SIGTERM));
+                    case 0: // Program terminated successfully.
+                        printf("%s - %d has been terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(SIGTERM));
                         break;
-                        case -1: // If for some reason we cannot terminate the program by asking nicely.
-                            sleep(5);
-                            printf("%s - sent SIGKILL to %d\n", timestamp(), pid);
-                            term = kill(pid, SIGKILL);
+                    case -1: // If for some reason we cannot terminate the program by asking nicely.
+                        sleep(5);
+                        printf("%s - sent SIGKILL to %d\n", timestamp(), pid);
+                        term = kill(pid, SIGKILL);
                         break;
-                        // Error handling
-                        case EPERM:
-                            perror("Not root or super-user. (Please run under sudo).\n");
+                    // Error handling
+                    case EPERM:
+                        perror("Not root or super-user. (Please run under sudo).\n");
                         break;
-                        case EINVAL:
-                            printf("Sig <%d>\n", SIGTERM); // Doubt we will ever encounter this error.
-                            perror("Invalid SIG value when attempting to terminate.\n");
+                    case EINVAL:
+                        printf("Sig <%d>\n", SIGTERM); // Doubt we will ever encounter this error.
+                        perror("Invalid SIG value when attempting to terminate.\n");
                         break;
-                        case ESRCH:
-                            printf("Pid <%d>\n", getpid());
-                            perror("Could not find PID of child process.\n");
+                    case ESRCH:
+                        printf("Pid <%d>\n", getpid());
+                        perror("Could not find PID of child process.\n");
                         break;
                     }
                 }
@@ -186,13 +190,13 @@ int handle_request(struct request *a_request, int thread_id)
 
             // Logging
 
-             // Need to check signal to check WTERMSIG (best practice)
-            if(!WIFEXITED(status) && WIFSIGNALED(status))
+            // Need to check signal to check WTERMSIG (best practice)
+            if (!WIFEXITED(status) && WIFSIGNALED(status))
             {
                 // Making sure we somehow didn't mess up.
-                if(WTERMSIG(status) != SIGTERM && WTERMSIG(status) != SIGKILL)
+                if (WTERMSIG(status) != SIGTERM && WTERMSIG(status) != SIGKILL)
                 {
-                    if(retVal == -1)
+                    if (retVal == -1)
                     {
                         fprintf(stdout, "%s - Could not execute '%s'\n", timestamp(), a_request->program);
                     }
@@ -207,7 +211,7 @@ int handle_request(struct request *a_request, int thread_id)
             // (programmed executed sucessfully)
             else
             {
-                if(retVal == -1)
+                if (retVal == -1)
                 {
                     fprintf(stdout, "%s - Could not execute '%s'\n", timestamp(), a_request->program);
                 }
@@ -251,7 +255,7 @@ void *handle_requests_loop(void *data)
                 pthread_mutex_unlock(&request_mutex);
                 handle_request(a_request, thread_id);
                 free(a_request);
-                pthread_mutex_lock(&request_mutex);
+                //pthread_mutex_lock(&request_mutex);
             }
         }
         else
@@ -263,69 +267,76 @@ void *handle_requests_loop(void *data)
     }
 }
 
-void optional_args(int new_fd)
-{
-    int index = 0;
-    char temp[MAX_BUFFER_SIZE];
-    if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
-    {
-        perror("recv");
-        exit(1);
-    }
-    temp[MAX_BUFFER_SIZE-1] = 0;
+// int optional_args(int new_fd)
+// {
+//     char **outfileArg = NULL;
+//     char **logfileArg = NULL;
+//     bool LOGFILE = false;
 
-    if (temp[0] != '\0')
-    {
-        char *token = strtok(temp, " ");
-        while (token != NULL)
-        {
-            outfileArg = realloc(outfileArg, sizeof(char *) * index);
-            outfileArg[index] = token;
-            token = strtok(NULL, " ");
-            index++;
-        }
-        // printf("%s %s\n", outfileArg[0] outfileArg[1]);
-        OUTFILE = true;
-        outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
-        outfileArg[index] = 0;
-    }
-    else {
-        // printf("NULL\n");
-        OUTFILE = false;
-    }
-    // Log FILE 
-    index = 0;
-    temp[0] = '\0';
+//     int index = 0;
+//     char temp[MAX_BUFFER_SIZE];
+//     if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
+//     {
+//         perror("recv");
+//         exit(1);
+//     }
+//     temp[MAX_BUFFER_SIZE - 1] = 0;
 
-    if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
-    {
-        perror("recv");
-        exit(1);
-    }
-    temp[MAX_BUFFER_SIZE] = 0;
+//     if (temp[0] != '\0')
+//     {
+//         char *token = strtok(temp, " ");
+//         while (token != NULL)
+//         {
+//             //printf("%c\n", token);
+//             //printf("%d\n", index);
+//             outfileArg = realloc(outfileArg, sizeof(char *) * index);
+//             outfileArg[index] = token;
+//             token = strtok(NULL, " ");
+//             index++;
+//         }
+//         //printf("%s\n", outfileArg);
+//         // printf("%s %s\n", outfileArg[0] outfileArg[1]);
+//         outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
+//         outfileArg[index] = 0;
+//     }
 
-    if (temp[0] != '\0')
-    {
-        // Take the first char to SPACE, then place the string into a char[]
-        char *token = strtok(temp, " ");
-        while (token != NULL)
-        {
-            logfileArg = realloc(logfileArg, sizeof(char *) * index);
-            logfileArg[index] = token;
-            token = strtok(NULL, " ");
-            index++;
-        }
-        // printf("%s %s\n", logfileArg[0], logfileArg[1]);
-        LOGFILE = true;
-        logfileArg = realloc(logfileArg, sizeof(char *) * (index + 1));
-        logfileArg[index] = 0;
-    }
-    else
-    {
-        // printf("NULL\n");
-        LOGFILE = false;
-    }
-}
+//     // Log FILE
+//     int indexLog = 0;
+//     char tempLog[MAX_BUFFER_SIZE];
+//     tempLog[0] = '\0';
+
+//     if (recv(new_fd, &tempLog, MAX_BUFFER_SIZE, 0) == -1)
+//     {
+//         perror("recv");
+//         exit(1);
+//     }
+//     tempLog[MAX_BUFFER_SIZE] = 0;
+
+//     if (tempLog[0] != '\0')
+//     {
+//         // Take the first char to SPACE, then place the string into a char[]
+//         char *tokenLog = strtok(tempLog, " ");
+//         while (tokenLog != NULL)
+//         {
+//             logfileArg = realloc(logfileArg, sizeof(char *) * indexLog);
+//             printf("%s\n", tokenLog);
+//             logfileArg[indexLog] = tokenLog;
+//             tokenLog = strtok(NULL, " ");
+//             indexLog++;
+//         }
+//         // printf("%s %s\n", logfileArg[0], logfileArg[1]);
+//         LOGFILE = 1;
+//         logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
+//         logfileArg[indexLog] = 0;
+//     }
+//     else
+//     {
+//         // printf("NULL\n");
+//         LOGFILE = 0;
+//     }
+
+//     return LOGFILE;
+// }
 
 int main(int argc, char *argv[])
 {
@@ -427,10 +438,82 @@ int main(int argc, char *argv[])
             // }
             // int programBytes = ntohs(buffer);
 
+<<<<<<< HEAD
             printf("%s\n ", new_fd);
             
             optional_args(new_fd);
             if (LOGFILE) {
+=======
+            char **outfileArg = NULL;
+            char **logfileArg = NULL;
+            bool LOGFILE = false;
+
+            int index = 0;
+            char temp[MAX_BUFFER_SIZE];
+            if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
+            {
+                perror("recv");
+                exit(1);
+            }
+            temp[MAX_BUFFER_SIZE - 1] = 0;
+
+            if (temp[0] != '\0')
+            {
+                char *token = strtok(temp, " ");
+                while (token != NULL)
+                {
+                    //printf("%c\n", token);
+                    //printf("%d\n", index);
+                    outfileArg = realloc(outfileArg, sizeof(char *) * index);
+                    outfileArg[index] = token;
+                    token = strtok(NULL, " ");
+                    index++;
+                }
+                //printf("%s\n", outfileArg);
+                // printf("%s %s\n", outfileArg[0] outfileArg[1]);
+                outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
+                outfileArg[index] = 0;
+            }
+
+            // Log FILE
+            int indexLog = 0;
+            char tempLog[MAX_BUFFER_SIZE];
+            tempLog[0] = '\0';
+
+            if (recv(new_fd, &tempLog, MAX_BUFFER_SIZE, 0) == -1)
+            {
+                perror("recv");
+                exit(1);
+            }
+            tempLog[MAX_BUFFER_SIZE] = 0;
+
+            if (tempLog[0] != '\0')
+            {
+                // Take the first char to SPACE, then place the string into a char[]
+                char *tokenLog = strtok(tempLog, " ");
+                while (tokenLog != NULL)
+                {
+                    logfileArg = realloc(logfileArg, sizeof(char *) * indexLog);
+                    printf("%s\n", tokenLog);
+                    logfileArg[indexLog] = tokenLog;
+                    tokenLog = strtok(NULL, " ");
+                    indexLog++;
+                }
+                // printf("%s %s\n", logfileArg[0], logfileArg[1]);
+                LOGFILE = 1;
+                logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
+                logfileArg[indexLog] = 0;
+            }
+            else
+            {
+                // printf("NULL\n");
+                LOGFILE = 0;
+            }
+
+            //int LOGFILE = optional_args(new_fd);
+            if (LOGFILE)
+            {
+>>>>>>> f81b61df551c8347812b1d973ca7aee737d17a83
                 freopen(logfileArg[1], "a+", stdout);
             }
 
@@ -473,7 +556,7 @@ int main(int argc, char *argv[])
             args = realloc(args, sizeof(char *) * (spaces + 1));
             args[spaces] = 0;
 
-            add_request(request_counter, new_fd, programBuffer, args, &request_mutex, &got_request);
+            add_request(request_counter, new_fd, programBuffer, args, outfileArg, logfileArg, &request_mutex, &got_request);
             request_counter++;
         }
     }
