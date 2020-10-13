@@ -426,7 +426,9 @@ int main(int argc, char *argv[])
             //     exit(1);
             // }
             // int programBytes = ntohs(buffer);
-       
+
+            printf("%s\n ", new_fd);
+            
             optional_args(new_fd);
             if (LOGFILE) {
                 freopen(logfileArg[1], "a+", stdout);
