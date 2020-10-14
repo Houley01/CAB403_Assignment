@@ -1,4 +1,7 @@
 ### C ###
+logfile
+overseer
+test_prog
 # Prerequisites
 *.d
 

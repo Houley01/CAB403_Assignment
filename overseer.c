@@ -124,17 +124,40 @@ void exit_handler(int SIG)
 int handle_request(struct request *a_request, int thread_id)
 {
     // Debug
-    printf("Thread %d handled request %d\n", thread_id, a_request->number);
-
-    fprintf(stdout, "%s - Attempting to execute '%s'...\n", timestamp(), a_request->program);
-
-    // retVal will contain the return value '-1' if execlp couldn't execute the program
+    // printf("Thread %d handled request %d\n", thread_id, a_request->number);
+// retVal will contain the return value '-1' if execlp couldn't execute the program
     int retVal;
     int status;
     int logFile;
     int logFileFd;
     int stdoutFd;
 
+    if (a_request->logfile != NULL)
+    {
+        // Duplicate stdout fd to be used for restoring stdout to the screen
+        stdoutFd = dup(STDOUT_FILENO);
+
+        // Open the logfile with write only and append flags
+        logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0644);
+
+        // Redirect stdout to write or append to the logfile provided by the user
+        logFileFd = dup2(logFile, STDOUT_FILENO);
+
+        if (logFileFd < 0)
+        {
+            perror("Cannot duplicate file descriptor.");
+            exit(1);
+        }
+    }
+
+    fprintf(stdout, "%s - Attempting to execute '%s'...\n", timestamp(), a_request->program);
+
+    // Close the log file fd and return stdout to the screen
+    close(logFileFd);
+    dup2(stdoutFd, STDOUT_FILENO);
+    close(stdoutFd);
+
+    
     // Create a fork before calling execlp so we don't replace the overseer with the program the client wishes to run!
     pid_t pid = fork();
     // Fork was successfully executed!
@@ -151,19 +174,22 @@ int handle_request(struct request *a_request, int thread_id)
         {
             pid_t ws = waitpid(pid, &status, WNOHANG); // Current status of child (0 is running)
 
-            // Duplicate stdout fd to be used for restoring stdout to the screen
-            stdoutFd = dup(STDOUT_FILENO);
-
-            // Open the logfile with write only and append flags
-            logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND);
-
-            // Redirect stdout to write or append to the logfile provided by the user
-            logFileFd = dup2(logFile, STDOUT_FILENO);
-
-            if (logFileFd < 0)
+            if (a_request->logfile != NULL)
             {
-                perror("Cannot duplicate file descriptor.");
-                exit(1);
+                // Duplicate stdout fd to be used for restoring stdout to the screen
+                stdoutFd = dup(STDOUT_FILENO);
+
+                // Open the logfile with write only and append flags
+                logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0644);
+
+                // Redirect stdout to write or append to the logfile provided by the user
+                logFileFd = dup2(logFile, STDOUT_FILENO);
+
+                if (logFileFd < 0)
+                {
+                    perror("Cannot duplicate file descriptor.");
+                    exit(1);
+                }
             }
 
             int count = 0, term;
@@ -447,6 +473,11 @@ int main(int argc, char *argv[])
                 logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
                 logfileArg[indexLog] = 0;
             }
+            //  else {
+            //     logfileArg = realloc(logfileArg, sizeof(char *) * 2);
+            //     logfileArg[0] = "\0";
+            //     logfileArg[1] = "\0";
+            // }
 
             //int LOGFILE = optional_args(new_fd);
 
