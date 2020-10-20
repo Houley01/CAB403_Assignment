@@ -19,6 +19,8 @@
 
 #define TERMINATE_TIMEOUT 10
 
+int sockfd;
+
 pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
@@ -52,7 +54,6 @@ void add_request(int request_num,
                  pthread_cond_t *p_cond_var)
 {
     struct request *a_request;
-
     a_request = (struct request *)malloc(sizeof(struct request));
     if (!a_request)
     {
@@ -114,7 +115,14 @@ void exit_handler(int SIG)
 {
     // TODO
     // - Kill all children process here
-    // - Remove all allocated memory (if any)
+    // https://stackoverflow.com/questions/10619952/how-to-completely-destroy-a-socket-connection-in-c
+    // Apperently doesn't completely destroy the socket (os cleans it up anyways)
+    close(sockfd);
+
+    pid_t parent = getppid();
+    kill(-parent, SIGKILL);
+
+
 
     printf("%s - Exiting overseer due to: CTRL^C\n", timestamp());
     exit(0);
@@ -341,6 +349,8 @@ void *handle_requests_loop(void *data)
 int main(int argc, char *argv[])
 {
     signal(SIGINT, exit_handler); // PART D (Do not remove)
+    // threading cleanup (man prctl)
+    // prctl(PR_SET_PDEATHSIG, SIGHUP);z
     // Setting up distributed system server
     if (argc != 2)
     {
@@ -351,7 +361,7 @@ int main(int argc, char *argv[])
     int port = atoi(argv[1]);
 
     /* generate the socket */
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1)
     {
         perror("Socked returned error");
@@ -438,12 +448,6 @@ int main(int argc, char *argv[])
             // }
             // int programBytes = ntohs(buffer);
 
-<<<<<<< HEAD
-            printf("%s\n ", new_fd);
-            
-            optional_args(new_fd);
-            if (LOGFILE) {
-=======
             char **outfileArg = NULL;
             char **logfileArg = NULL;
             bool LOGFILE = false;
@@ -513,7 +517,6 @@ int main(int argc, char *argv[])
             //int LOGFILE = optional_args(new_fd);
             if (LOGFILE)
             {
->>>>>>> f81b61df551c8347812b1d973ca7aee737d17a83
                 freopen(logfileArg[1], "a+", stdout);
             }
 
