@@ -5,7 +5,7 @@ helpers = helpers
 
 server_args = 12345
 client_args = localhost 12345 $(test) one two three four
-out_and_log = -o outputfile -log logfile
+out_and_log = -o outputfile -log logfile.txt
 
 build: clean build_server build_client
 	@gcc -o $(test) $(test).c

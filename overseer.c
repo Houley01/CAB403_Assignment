@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <stdbool.h>
+#include <fcntl.h>
 #include "helpers.h"
 
 #define NUM_HANDLER_THREADS 5
@@ -131,14 +132,40 @@ void exit_handler(int SIG)
 int handle_request(struct request *a_request, int thread_id)
 {
     // Debug
-    printf("Thread %d handled request %d\n", thread_id, a_request->number);
+    // printf("Thread %d handled request %d\n", thread_id, a_request->number);
+// retVal will contain the return value '-1' if execlp couldn't execute the program
+    int retVal;
+    int status;
+    int logFile;
+    int logFileFd;
+    int stdoutFd;
+
+    if (a_request->logfile != NULL)
+    {
+        // Duplicate stdout fd to be used for restoring stdout to the screen
+        stdoutFd = dup(STDOUT_FILENO);
+
+        // Open the logfile with write only and append flags
+        logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0644);
+
+        // Redirect stdout to write or append to the logfile provided by the user
+        logFileFd = dup2(logFile, STDOUT_FILENO);
+
+        if (logFileFd < 0)
+        {
+            perror("Cannot duplicate file descriptor.");
+            exit(1);
+        }
+    }
 
     fprintf(stdout, "%s - Attempting to execute '%s'...\n", timestamp(), a_request->program);
 
-    // retVal will contain the return value '-1' if execlp couldn't execute the program
-    int retVal;
-    int status;
+    // Close the log file fd and return stdout to the screen
+    close(logFileFd);
+    dup2(stdoutFd, STDOUT_FILENO);
+    close(stdoutFd);
 
+    
     // Create a fork before calling execlp so we don't replace the overseer with the program the client wishes to run!
     pid_t pid = fork();
     // Fork was successfully executed!
@@ -154,6 +181,24 @@ int handle_request(struct request *a_request, int thread_id)
         else
         {
             pid_t ws = waitpid(pid, &status, WNOHANG); // Current status of child (0 is running)
+
+            if (a_request->logfile != NULL)
+            {
+                // Duplicate stdout fd to be used for restoring stdout to the screen
+                stdoutFd = dup(STDOUT_FILENO);
+
+                // Open the logfile with write only and append flags
+                logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0644);
+
+                // Redirect stdout to write or append to the logfile provided by the user
+                logFileFd = dup2(logFile, STDOUT_FILENO);
+
+                if (logFileFd < 0)
+                {
+                    perror("Cannot duplicate file descriptor.");
+                    exit(1);
+                }
+            }
 
             int count = 0, term;
             int timeout = TERMINATE_TIMEOUT; // Need to update once part B is done
@@ -237,6 +282,11 @@ int handle_request(struct request *a_request, int thread_id)
         fprintf(stderr, "Could not create a fork.\n");
     }
 
+    // Close the log file fd and return stdout to the screen
+    close(logFileFd);
+    dup2(stdoutFd, 1);
+    close(stdoutFd);
+
     // Let the Overseer know that the job has finished
     close(a_request->fd);
     return 1;
@@ -274,77 +324,6 @@ void *handle_requests_loop(void *data)
         }
     }
 }
-
-// int optional_args(int new_fd)
-// {
-//     char **outfileArg = NULL;
-//     char **logfileArg = NULL;
-//     bool LOGFILE = false;
-
-//     int index = 0;
-//     char temp[MAX_BUFFER_SIZE];
-//     if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
-//     {
-//         perror("recv");
-//         exit(1);
-//     }
-//     temp[MAX_BUFFER_SIZE - 1] = 0;
-
-//     if (temp[0] != '\0')
-//     {
-//         char *token = strtok(temp, " ");
-//         while (token != NULL)
-//         {
-//             //printf("%c\n", token);
-//             //printf("%d\n", index);
-//             outfileArg = realloc(outfileArg, sizeof(char *) * index);
-//             outfileArg[index] = token;
-//             token = strtok(NULL, " ");
-//             index++;
-//         }
-//         //printf("%s\n", outfileArg);
-//         // printf("%s %s\n", outfileArg[0] outfileArg[1]);
-//         outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
-//         outfileArg[index] = 0;
-//     }
-
-//     // Log FILE
-//     int indexLog = 0;
-//     char tempLog[MAX_BUFFER_SIZE];
-//     tempLog[0] = '\0';
-
-//     if (recv(new_fd, &tempLog, MAX_BUFFER_SIZE, 0) == -1)
-//     {
-//         perror("recv");
-//         exit(1);
-//     }
-//     tempLog[MAX_BUFFER_SIZE] = 0;
-
-//     if (tempLog[0] != '\0')
-//     {
-//         // Take the first char to SPACE, then place the string into a char[]
-//         char *tokenLog = strtok(tempLog, " ");
-//         while (tokenLog != NULL)
-//         {
-//             logfileArg = realloc(logfileArg, sizeof(char *) * indexLog);
-//             printf("%s\n", tokenLog);
-//             logfileArg[indexLog] = tokenLog;
-//             tokenLog = strtok(NULL, " ");
-//             indexLog++;
-//         }
-//         // printf("%s %s\n", logfileArg[0], logfileArg[1]);
-//         LOGFILE = 1;
-//         logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
-//         logfileArg[indexLog] = 0;
-//     }
-//     else
-//     {
-//         // printf("NULL\n");
-//         LOGFILE = 0;
-//     }
-
-//     return LOGFILE;
-// }
 
 int main(int argc, char *argv[])
 {
@@ -450,7 +429,6 @@ int main(int argc, char *argv[])
 
             char **outfileArg = NULL;
             char **logfileArg = NULL;
-            bool LOGFILE = false;
 
             int index = 0;
             char temp[MAX_BUFFER_SIZE];
@@ -498,27 +476,20 @@ int main(int argc, char *argv[])
                 while (tokenLog != NULL)
                 {
                     logfileArg = realloc(logfileArg, sizeof(char *) * indexLog);
-                    printf("%s\n", tokenLog);
                     logfileArg[indexLog] = tokenLog;
                     tokenLog = strtok(NULL, " ");
                     indexLog++;
                 }
-                // printf("%s %s\n", logfileArg[0], logfileArg[1]);
-                LOGFILE = 1;
                 logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
                 logfileArg[indexLog] = 0;
             }
-            else
-            {
-                // printf("NULL\n");
-                LOGFILE = 0;
-            }
+            //  else {
+            //     logfileArg = realloc(logfileArg, sizeof(char *) * 2);
+            //     logfileArg[0] = "\0";
+            //     logfileArg[1] = "\0";
+            // }
 
             //int LOGFILE = optional_args(new_fd);
-            if (LOGFILE)
-            {
-                freopen(logfileArg[1], "a+", stdout);
-            }
 
             char programBuffer[MAX_BUFFER_SIZE];
 
