@@ -139,7 +139,10 @@ int handle_request(struct request *a_request, int thread_id)
 
     // Contains the filename of the log file. For some reason, this buffer is a workaround for a memory bug?..
     char logBuffer[MAX_BUFFER_SIZE];
-    snprintf(logBuffer, sizeof(logBuffer), "%s", a_request->logfile[1]);
+    if (a_request->logfile != NULL)
+    {
+        snprintf(logBuffer, sizeof(logBuffer), "%s", a_request->logfile[1]);
+    }
 
     // Debug memory
     // printf("%p\n", &a_request->logfile);
@@ -562,12 +565,12 @@ int main(int argc, char *argv[])
                 logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
                 logfileArg[indexLog] = 0;
             }
-            else
-            {
-                logfileArg = realloc(logfileArg, sizeof(char *) * 2);
-                logfileArg[0] = "\0";
-                logfileArg[1] = "\0";
-            }
+            // else
+            // {
+            //     logfileArg = realloc(logfileArg, sizeof(char *) * 2);
+            //     logfileArg[0] = "\0";
+            //     logfileArg[1] = "\0";
+            // }
 
             //int LOGFILE = optional_args(new_fd);
 
