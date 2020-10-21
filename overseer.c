@@ -137,9 +137,12 @@ int handle_request(struct request *a_request, int thread_id)
     int logFileFd = 0;
     int stdoutFd = 0;
 
+    // Contains the filename of the log file. For some reason, this buffer is a workaround for a memory bug?..
+    char logBuffer[MAX_BUFFER_SIZE];
+    snprintf(logBuffer, sizeof(logBuffer), "%s", a_request->logfile[1]);
+
     // Debug memory
     // printf("%p\n", &a_request->logfile);
-    // printf("%p\n", &a_request->logfile[1]);
     // printf("request number: %d\n", a_request->number);
 
     while (file_mutex_activated)
@@ -163,12 +166,13 @@ int handle_request(struct request *a_request, int thread_id)
 
         //debug
         printf("Thread id: %d\n", thread_id);
+        printf("Buffer name: %s\n", logBuffer);
         printf("Log file name below:\n");
         printf("%s\n", a_request->logfile[1]);
         printf("request number: %d\n", a_request->number);
 
         // Open the logfile with write only and append flags
-        logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0777);
+        logFile = open(logBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
         if (logFile < 0)
         {
             printf("%s\n", a_request->logfile[1]);
@@ -243,7 +247,7 @@ int handle_request(struct request *a_request, int thread_id)
                 printf("request number: %d\n", a_request->number);
 
                 // Open the logfile with write only and append flags
-                logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0777);
+                logFile = open(logBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
                 if (logFile < 0)
                 {
                     printf("%s\n", a_request->logfile[1]);
@@ -558,11 +562,12 @@ int main(int argc, char *argv[])
                 logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
                 logfileArg[indexLog] = 0;
             }
-            //  else {
-            //     logfileArg = realloc(logfileArg, sizeof(char *) * 2);
-            //     logfileArg[0] = "\0";
-            //     logfileArg[1] = "\0";
-            // }
+            else
+            {
+                logfileArg = realloc(logfileArg, sizeof(char *) * 2);
+                logfileArg[0] = "\0";
+                logfileArg[1] = "\0";
+            }
 
             //int LOGFILE = optional_args(new_fd);
 
