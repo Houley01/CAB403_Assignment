@@ -24,6 +24,11 @@ pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
 
+pthread_mutex_t file_mutex;
+pthread_cond_t got_file;
+bool file_mutex_activated = false;
+char new_connection_buffer[MAX_BUFFER_SIZE];
+
 // char **outfileArg = NULL;
 // char **logfileArg = NULL;
 // bool LOGFILE = false;
@@ -124,21 +129,52 @@ void exit_handler(int SIG)
 int handle_request(struct request *a_request, int thread_id)
 {
     // Debug
-    // printf("Thread %d handled request %d\n", thread_id, a_request->number);
-// retVal will contain the return value '-1' if execlp couldn't execute the program
-    int retVal;
+    printf("Thread %d handled request %d\n", thread_id, a_request->number);
+    // retVal will contain the return value '-1' if execlp couldn't execute the program
+    int retVal = 0;
     int status;
-    int logFile;
-    int logFileFd;
-    int stdoutFd;
+    int logFile = 0;
+    int logFileFd = 0;
+    int stdoutFd = 0;
+
+    // Debug memory
+    // printf("%p\n", &a_request->logfile);
+    // printf("%p\n", &a_request->logfile[1]);
+    // printf("request number: %d\n", a_request->number);
+
+    while (file_mutex_activated)
+    {
+        printf("Thread %d waiting...\n", thread_id);
+        pthread_cond_wait(&got_file, &file_mutex);
+        printf("Thread %d finished waiting\n", thread_id);
+    }
 
     if (a_request->logfile != NULL)
     {
+        file_mutex_activated = true;
+        pthread_mutex_trylock(&file_mutex);
+        //int test = pthread_mutex_trylock(&file_mutex);
+        //printf("%d\n", test);
+        printf("Thread %d locked\n", thread_id);
+        sleep(2);
+        //printf("%p\n", a_request->logfile);
         // Duplicate stdout fd to be used for restoring stdout to the screen
         stdoutFd = dup(STDOUT_FILENO);
 
+        //debug
+        printf("Thread id: %d\n", thread_id);
+        printf("Log file name below:\n");
+        printf("%s\n", a_request->logfile[1]);
+        printf("request number: %d\n", a_request->number);
+
         // Open the logfile with write only and append flags
-        logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0644);
+        logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0777);
+        if (logFile < 0)
+        {
+            printf("%s\n", a_request->logfile[1]);
+            perror("Cannot open log file.");
+            exit(1);
+        }
 
         // Redirect stdout to write or append to the logfile provided by the user
         logFileFd = dup2(logFile, STDOUT_FILENO);
@@ -152,12 +188,19 @@ int handle_request(struct request *a_request, int thread_id)
 
     fprintf(stdout, "%s - Attempting to execute '%s'...\n", timestamp(), a_request->program);
 
-    // Close the log file fd and return stdout to the screen
-    close(logFileFd);
-    dup2(stdoutFd, STDOUT_FILENO);
-    close(stdoutFd);
+    if (a_request->logfile != NULL)
+    {
+        // Close the log file fd and return stdout to the screen
+        close(logFile);
+        close(logFileFd);
+        dup2(stdoutFd, STDOUT_FILENO);
+        close(stdoutFd);
+        pthread_mutex_unlock(&file_mutex);
+        pthread_cond_signal(&got_file);
+        printf("Thread %d unlocked\n", thread_id);
+        file_mutex_activated = false;
+    }
 
-    
     // Create a fork before calling execlp so we don't replace the overseer with the program the client wishes to run!
     pid_t pid = fork();
     // Fork was successfully executed!
@@ -174,13 +217,39 @@ int handle_request(struct request *a_request, int thread_id)
         {
             pid_t ws = waitpid(pid, &status, WNOHANG); // Current status of child (0 is running)
 
+            while (file_mutex_activated)
+            {
+                printf("Thread %d waiting...\n", thread_id);
+                pthread_cond_wait(&got_file, &file_mutex);
+                printf("Thread %d finished waiting\n", thread_id);
+            }
+
             if (a_request->logfile != NULL)
             {
+                file_mutex_activated = true;
+                pthread_mutex_trylock(&file_mutex);
+                // int test = pthread_mutex_trylock(&file_mutex);
+                // printf("%d\n", test);
+                printf("Thread %d locked\n", thread_id);
+                sleep(2);
+                //printf("%p\n", a_request->logfile);
                 // Duplicate stdout fd to be used for restoring stdout to the screen
                 stdoutFd = dup(STDOUT_FILENO);
 
+                //debug
+                printf("Thread id: %d\n", thread_id);
+                printf("Log file name below:\n");
+                printf("%s\n", a_request->logfile[1]);
+                printf("request number: %d\n", a_request->number);
+
                 // Open the logfile with write only and append flags
-                logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0644);
+                logFile = open(a_request->logfile[1], O_WRONLY | O_APPEND | O_CREAT, 0777);
+                if (logFile < 0)
+                {
+                    printf("%s\n", a_request->logfile[1]);
+                    perror("Cannot open log file.");
+                    exit(1);
+                }
 
                 // Redirect stdout to write or append to the logfile provided by the user
                 logFileFd = dup2(logFile, STDOUT_FILENO);
@@ -275,9 +344,17 @@ int handle_request(struct request *a_request, int thread_id)
     }
 
     // Close the log file fd and return stdout to the screen
-    close(logFileFd);
-    dup2(stdoutFd, 1);
-    close(stdoutFd);
+    if (a_request->logfile != NULL)
+    {
+        // Close the log file fd and return stdout to the screen
+        close(logFileFd);
+        dup2(stdoutFd, STDOUT_FILENO);
+        close(stdoutFd);
+        pthread_mutex_unlock(&file_mutex);
+        pthread_cond_signal(&got_file);
+        printf("Thread %d unlocked\n", thread_id);
+        file_mutex_activated = false;
+    }
 
     // Let the Overseer know that the job has finished
     close(a_request->fd);
@@ -298,7 +375,7 @@ void *handle_requests_loop(void *data)
         if (num_requests > 0)
         {
             // Debug info
-            printf("Thread ID: %d - Requests in list: %d\n", thread_id, num_requests);
+            //printf("Thread ID: %d - Requests in list: %d\n", thread_id, num_requests);
             a_request = get_request();
             if (a_request)
             {
@@ -376,11 +453,13 @@ int main(int argc, char *argv[])
     printf("Now listening for requests...\n\n");
 
     // Setting up thread pool
-    int thr_id[NUM_HANDLER_THREADS];
     pthread_t p_threads[NUM_HANDLER_THREADS];
 
     pthread_mutex_init(&request_mutex, NULL);
     pthread_cond_init(&got_request, NULL);
+
+    pthread_mutex_init(&file_mutex, NULL);
+    pthread_cond_init(&got_file, NULL);
 
     // PART C
     for (int i = 0; i < NUM_HANDLER_THREADS; i++)
@@ -392,7 +471,6 @@ int main(int argc, char *argv[])
 
     while (1)
     {
-        sleep(1);
         sin_size = sizeof(struct sockaddr_in);
         if ((new_fd = accept(sockfd, (struct sockaddr *)&their_addr,
                              &sin_size)) == -1)
@@ -403,7 +481,14 @@ int main(int argc, char *argv[])
         else
         {
             // Connection from a client was successfully made to the overseer!
-            fprintf(stdout, "%s - Connection received from %s\n", timestamp(), inet_ntoa(their_addr.sin_addr));
+            if (file_mutex_activated)
+            {
+                snprintf(new_connection_buffer, sizeof(new_connection_buffer), "%s - Connection received from %s\n", timestamp(), inet_ntoa(their_addr.sin_addr));
+            }
+            else
+            {
+                fprintf(stdout, "%s - Connection received from %s\n", timestamp(), inet_ntoa(their_addr.sin_addr));
+            }
 
             // Code below for getting the number of bytes being sent to know how many bytes to expect to receive
             // Doesn't really work for some reason though on the 2nd recv, further testing needed!
@@ -519,6 +604,9 @@ int main(int argc, char *argv[])
             // Add space for NULL char in args list
             args = realloc(args, sizeof(char *) * (spaces + 1));
             args[spaces] = 0;
+
+            // Debug memory
+            //printf("%p\n", &logfileArg);
 
             add_request(request_counter, new_fd, programBuffer, args, outfileArg, logfileArg, &request_mutex, &got_request);
             request_counter++;
