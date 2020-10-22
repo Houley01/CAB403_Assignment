@@ -5,4 +5,6 @@
 // Better to have it as a universal function
 char *timestamp();
 
+int getProcMemoryInfo();
+
 #endif
