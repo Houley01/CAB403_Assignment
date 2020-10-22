@@ -136,14 +136,19 @@ int handle_request(struct request *a_request, int thread_id)
     int logFile = 0;
     int logFileFd = 0;
     int stdoutFd = 0;
-
+    int outFile = 0;
+    int outFileFd = 0;
     // Contains the filename of the log file. For some reason, this buffer is a workaround for a memory bug?..
     char logBuffer[MAX_BUFFER_SIZE];
     if (a_request->logfile != NULL)
     {
         snprintf(logBuffer, sizeof(logBuffer), "%s", a_request->logfile[1]);
     }
-
+    char outBuffer[MAX_BUFFER_SIZE];
+    if (a_request->outfile != NULL)
+    {
+        snprintf(outBuffer, sizeof(outBuffer), "%s", a_request->outfile[1]);
+    }
     // Debug memory
     // printf("%p\n", &a_request->logfile);
     // printf("request number: %d\n", a_request->number);
@@ -168,11 +173,11 @@ int handle_request(struct request *a_request, int thread_id)
         stdoutFd = dup(STDOUT_FILENO);
 
         //debug
-        printf("Thread id: %d\n", thread_id);
-        printf("Buffer name: %s\n", logBuffer);
-        printf("Log file name below:\n");
-        printf("%s\n", a_request->logfile[1]);
-        printf("request number: %d\n", a_request->number);
+        // printf("Thread id: %d\n", thread_id);
+        // printf("Buffer name: %s\n", logBuffer);
+        // printf("Log file name below:\n");
+        // printf("%s\n", a_request->logfile[1]);
+        // printf("request number: %d\n", a_request->number);
 
         // Open the logfile with write only and append flags
         logFile = open(logBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
@@ -216,9 +221,41 @@ int handle_request(struct request *a_request, int thread_id)
         // Fork returns 0 for the child process
         if (pid == 0)
         {
+            if (a_request->outfile != NULL)
+            {
+                stdoutFd = dup(STDOUT_FILENO);
+
+                // Open the outfile with write only and append flags
+                outFile = open(outBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
+                if (outFile < 0)
+                {
+                    printf("%s\n", a_request->outfile[1]);
+                    perror("Cannot open log file.");
+                    exit(1);
+                }
+
+                // Redirect stdout to write or append to the logfile provided by the user
+                outFileFd = dup2(outFile, STDOUT_FILENO);
+
+                if (outFileFd < 0)
+                {
+                    perror("Cannot duplicate file descriptor.");
+                    exit(1);
+                }
+            }
             // Run the program and check if execlp will return '-1' which will let the parent know if it failed
             // retVal = execvp(a_request->program, a_request->args);
             retVal = execvp(a_request->program, a_request->args);
+
+            // Close the Out file fd and return stdout to the screen
+            if (a_request->outfile != NULL)
+            {
+                close(outFile);
+                close(outFileFd);
+                dup2(stdoutFd, STDOUT_FILENO);
+                close(stdoutFd);
+                // file_mutex_activated = false;
+            }
         }
         else
         {
