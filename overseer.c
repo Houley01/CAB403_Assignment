@@ -136,8 +136,10 @@ int handle_request(struct request *a_request, int thread_id)
     int logFile = 0;
     int logFileFd = 0;
     int stdoutFd = 0;
+    int stderrFd = 0;
     int outFile = 0;
     int outFileFd = 0;
+    int outFileFdErr = 0;
     // Contains the filename of the log file. For some reason, this buffer is a workaround for a memory bug?..
     char logBuffer[MAX_BUFFER_SIZE];
     if (a_request->logfile != NULL)
@@ -209,7 +211,7 @@ int handle_request(struct request *a_request, int thread_id)
         close(stdoutFd);
         pthread_mutex_unlock(&file_mutex);
         pthread_cond_signal(&got_file);
-        printf("Thread %d unlocked\n", thread_id);
+        // printf("Thread %d unlocked\n", thread_id);
         file_mutex_activated = false;
     }
 
@@ -221,25 +223,43 @@ int handle_request(struct request *a_request, int thread_id)
         // Fork returns 0 for the child process
         if (pid == 0)
         {
+            while (file_mutex_activated)
+            {
+                // printf("Thread %d waiting...\n", thread_id);
+                pthread_cond_wait(&got_file, &file_mutex);
+                // printf("Thread %d finished waiting\n", thread_id);
+            }
             if (a_request->outfile != NULL)
             {
-                stdoutFd = dup(STDOUT_FILENO);
+                file_mutex_activated = true;
+                pthread_mutex_trylock(&file_mutex);
 
+                // printf("Thread %d locked\n", thread_id);
+                sleep(2);
+
+                stdoutFd = dup(STDOUT_FILENO);
+                stderrFd = dup(STDERR_FILENO);
                 // Open the outfile with write only and append flags
                 outFile = open(outBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
                 if (outFile < 0)
                 {
                     printf("%s\n", a_request->outfile[1]);
-                    perror("Cannot open log file.");
+                    perror("Cannot open out file.");
                     exit(1);
                 }
 
-                // Redirect stdout to write or append to the logfile provided by the user
+                // Redirect stdout to write or append to the outfile provided by the user
                 outFileFd = dup2(outFile, STDOUT_FILENO);
-
-                if (outFileFd < 0)
+                outFileFdErr = dup2(outFile, STDERR_FILENO);
+                // outFileFd = dup2(outFile, STDOUT_FILENO);
+                if (outFileFd < 0 )
                 {
                     perror("Cannot duplicate file descriptor.");
+                    exit(1);
+                }
+                if (outFileFdErr < 0)
+                {
+                    perror("Cannot duplicate file descriptor. Err");
                     exit(1);
                 }
             }
@@ -252,9 +272,15 @@ int handle_request(struct request *a_request, int thread_id)
             {
                 close(outFile);
                 close(outFileFd);
+                close(outFileFdErr);
                 dup2(stdoutFd, STDOUT_FILENO);
+                dup2(stderrFd, STDERR_FILENO);
                 close(stdoutFd);
-                // file_mutex_activated = false;
+                close(stderrFd);
+                pthread_mutex_unlock(&file_mutex);
+                pthread_cond_signal(&got_file);
+                // printf("Thread %d unlocked\n", thread_id);
+                file_mutex_activated = false;
             }
         }
         else
@@ -263,9 +289,9 @@ int handle_request(struct request *a_request, int thread_id)
 
             while (file_mutex_activated)
             {
-                printf("Thread %d waiting...\n", thread_id);
+                // printf("Thread %d waiting...\n", thread_id);
                 pthread_cond_wait(&got_file, &file_mutex);
-                printf("Thread %d finished waiting\n", thread_id);
+                // printf("Thread %d finished waiting\n", thread_id);
             }
 
             if (a_request->logfile != NULL)
@@ -274,17 +300,17 @@ int handle_request(struct request *a_request, int thread_id)
                 pthread_mutex_trylock(&file_mutex);
                 // int test = pthread_mutex_trylock(&file_mutex);
                 // printf("%d\n", test);
-                printf("Thread %d locked\n", thread_id);
+                // printf("Thread %d locked\n", thread_id);
                 sleep(2);
                 //printf("%p\n", a_request->logfile);
                 // Duplicate stdout fd to be used for restoring stdout to the screen
                 stdoutFd = dup(STDOUT_FILENO);
 
                 //debug
-                printf("Thread id: %d\n", thread_id);
-                printf("Log file name below:\n");
-                printf("%s\n", a_request->logfile[1]);
-                printf("request number: %d\n", a_request->number);
+                // printf("Thread id: %d\n", thread_id);
+                // printf("Log file name below:\n");
+                // printf("%s\n", a_request->logfile[1]);
+                // printf("request number: %d\n", a_request->number);
 
                 // Open the logfile with write only and append flags
                 logFile = open(logBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
