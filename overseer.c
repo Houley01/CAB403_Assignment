@@ -29,10 +29,9 @@ pthread_cond_t got_file;
 bool file_mutex_activated = false;
 char new_connection_buffer[MAX_BUFFER_SIZE];
 
-// char **outfileArg = NULL;
-// char **logfileArg = NULL;
-// bool LOGFILE = false;
-// bool OUTFILE = false;
+pthread_mutex_t memory_mutex;
+pthread_cond_t got_memory;
+bool memory_mutex_activated = false;
 
 struct request
 {
@@ -47,6 +46,86 @@ struct request
 
 struct request *requests = NULL;
 struct request *last_request = NULL;
+
+struct pidMemoryInfo
+{
+    int pid;
+    char *timestamp;
+    int memory;
+    bool active;
+    struct pidMemoryInfo *next;
+};
+
+struct pidMemoryInfo *add_memory_start = NULL;
+struct pidMemoryInfo *add_memory_last = NULL;
+
+// Manage memory info to the memory linked list of running processes
+// Memory will either be the memory of the current running process, or -1
+// If -1, it has been indicated that the process is no longer running
+void manage_memory_info(int pid, int memory)
+{
+    pthread_mutex_trylock(&memory_mutex);
+    struct pidMemoryInfo *read_memory = add_memory_start;
+    bool pid_does_exist = false;
+
+    while (read_memory != NULL)
+    {
+        if (read_memory->pid == pid)
+        {
+            pid_does_exist = true;
+            break;
+        }
+        else
+        {
+            read_memory = read_memory->next;
+        }
+    }
+
+    if (pid_does_exist && read_memory != NULL)
+    {
+        read_memory->timestamp = timestamp();
+        if (memory != -1)
+        {
+            read_memory->memory = memory;
+            read_memory->active = true;
+        }
+        else
+        {
+            read_memory->active = false;
+        }
+    }
+    else
+    {
+        struct pidMemoryInfo *new_memory_info;
+
+        new_memory_info = (struct pidMemoryInfo *)malloc(sizeof(struct pidMemoryInfo));
+        if (!new_memory_info)
+        {
+            fprintf(stderr, "Adding new memory info: out of memory\n");
+            exit(1);
+        }
+
+        new_memory_info->pid = pid;
+        new_memory_info->timestamp = timestamp();
+        new_memory_info->memory = memory;
+        new_memory_info->active = true;
+
+        if (add_memory_start == NULL)
+        {
+            add_memory_start = new_memory_info;
+            add_memory_last = new_memory_info;
+        }
+        else
+        {
+            add_memory_last->next = new_memory_info;
+            add_memory_last = new_memory_info;
+        }
+    }
+
+    pthread_mutex_unlock(&memory_mutex);
+
+    pthread_cond_signal(&got_memory);
+}
 
 void add_request(int request_num,
                  int fd,
@@ -252,7 +331,7 @@ int handle_request(struct request *a_request, int thread_id)
                 outFileFd = dup2(outFile, STDOUT_FILENO);
                 outFileFdErr = dup2(outFile, STDERR_FILENO);
                 // outFileFd = dup2(outFile, STDOUT_FILENO);
-                if (outFileFd < 0 )
+                if (outFileFd < 0)
                 {
                     perror("Cannot duplicate file descriptor.");
                     exit(1);
@@ -285,7 +364,31 @@ int handle_request(struct request *a_request, int thread_id)
         }
         else
         {
+            char memoryRead[MAX_BUFFER_SIZE];
+            snprintf(memoryRead, sizeof(memoryRead), "/proc/%d/maps", pid);
+
+            // While the process is running, update it's memory every 1 second!!!
+            while (waitpid(pid, &status, WNOHANG) == 0)
+            {
+                while (memory_mutex_activated)
+                {
+                    pthread_cond_wait(&got_memory, &memory_mutex);
+                }
+                memory_mutex_activated = true;
+                manage_memory_info(pid, getProcMemoryInfo(pid, memoryRead));
+                memory_mutex_activated = false;
+                sleep(1);
+            }
             pid_t ws = waitpid(pid, &status, WNOHANG); // Current status of child (0 is running)
+
+            // Let it be known that the process has finished running
+            while (memory_mutex_activated)
+            {
+                pthread_cond_wait(&got_memory, &memory_mutex);
+            }
+            memory_mutex_activated = true;
+            manage_memory_info(pid, -1);
+            memory_mutex_activated = false;
 
             while (file_mutex_activated)
             {
@@ -458,6 +561,18 @@ void *handle_requests_loop(void *data)
         else
         {
             // Debug info
+            if (thread_id == 0)
+            {
+                struct pidMemoryInfo *memtest = add_memory_start;
+
+                while (memtest != NULL)
+                {
+                    printf("%s | PID: %d | Memory: %d | Active: %d\n", memtest->timestamp, memtest->pid, memtest->memory, memtest->active);
+                    memtest = memtest->next;
+                }
+
+                memtest = add_memory_start;
+            }
             printf("Thread ID: %d - No requests\n", thread_id);
             pthread_cond_wait(&got_request, &request_mutex);
         }
@@ -531,10 +646,16 @@ int main(int argc, char *argv[])
     pthread_mutex_init(&file_mutex, NULL);
     pthread_cond_init(&got_file, NULL);
 
+    pthread_mutex_init(&memory_mutex, NULL);
+    pthread_cond_init(&got_memory, NULL);
+
     // PART C
     for (int i = 0; i < NUM_HANDLER_THREADS; i++)
     {
         pthread_create(&p_threads[i], NULL, handle_requests_loop, &i);
+        // For some reason, the value will not be accurate without a micro sleep
+        // This is okay though because it's not busy-waiting
+        sleep(0.1);
     }
 
     int request_counter = 0;
@@ -560,18 +681,6 @@ int main(int argc, char *argv[])
                 fprintf(stdout, "%s - Connection received from %s\n", timestamp(), inet_ntoa(their_addr.sin_addr));
             }
 
-            // Code below for getting the number of bytes being sent to know how many bytes to expect to receive
-            // Doesn't really work for some reason though on the 2nd recv, further testing needed!
-
-            // uint16_t buffer;
-
-            // if (recv(new_fd, &buffer, sizeof(uint16_t), 0) == -1)
-            // {
-            //     perror("recv");
-            //     exit(1);
-            // }
-            // int programBytes = ntohs(buffer);
-
             char **outfileArg = NULL;
             char **logfileArg = NULL;
 
@@ -589,15 +698,11 @@ int main(int argc, char *argv[])
                 char *token = strtok(temp, " ");
                 while (token != NULL)
                 {
-                    //printf("%c\n", token);
-                    //printf("%d\n", index);
                     outfileArg = realloc(outfileArg, sizeof(char *) * index);
                     outfileArg[index] = token;
                     token = strtok(NULL, " ");
                     index++;
                 }
-                //printf("%s\n", outfileArg);
-                // printf("%s %s\n", outfileArg[0] outfileArg[1]);
                 outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
                 outfileArg[index] = 0;
             }
@@ -628,14 +733,6 @@ int main(int argc, char *argv[])
                 logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
                 logfileArg[indexLog] = 0;
             }
-            // else
-            // {
-            //     logfileArg = realloc(logfileArg, sizeof(char *) * 2);
-            //     logfileArg[0] = "\0";
-            //     logfileArg[1] = "\0";
-            // }
-
-            //int LOGFILE = optional_args(new_fd);
 
             char programBuffer[MAX_BUFFER_SIZE];
 
