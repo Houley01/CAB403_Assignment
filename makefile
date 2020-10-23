@@ -5,7 +5,8 @@ helpers = helpers
 
 server_args = 12345
 client_args = localhost 12345 $(test) one two three four
-out_and_log = -o outputfile -log logfile.txt
+out_and_log = -o outputfile -log logfile
+out_and_log2 = -o outputfile2 -log logfile2
 
 build: clean build_server build_client
 	@gcc -o $(test) $(test).c
@@ -14,6 +15,9 @@ rebuild: clean build
 
 test_client: build_client
 	./$(client) localhost 12345 $(out_and_log) $(test) one two three four
+
+test_client2: build_client
+	./$(client) localhost 12345 $(out_and_log2) $(test) one two three four five
 
 run_client: build_client
 	./$(client) $(client_args) $(user_args)

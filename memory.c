@@ -1,49 +1,34 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <time.h>
 
-#define MAX_LINE_SIZE 256
-#define MAX_ADDRESS_SIZE 13
-#define MAX_FILE_LENGTH 64
-
-char *timestamp()
-{
-    time_t t = time(&t);
-    char *str = (char *)malloc(19 * sizeof(char)); // Not mallocing here results in a segmentation fault
-    // sprintf is similar to formating a printf internally and then assigning that to our buffer
-    sprintf(str, "%d-%02d-%02d %02d:%02d:%02d", localtime(&t)->tm_year + 1900, localtime(&t)->tm_mon + 1, localtime(&t)->tm_mday, localtime(&t)->tm_hour, localtime(&t)->tm_min, localtime(&t)->tm_sec);
-    return str;
-}
-
-int getProcMemoryInfo(int pid, char map[MAX_FILE_LENGTH])
+int main(void)
 {
     // Storing the line in here
-    char line[MAX_LINE_SIZE];
+    char line[1024];
     // Char buffers to store the memory addresses
-    char addressOne[MAX_ADDRESS_SIZE];
-    char addressTwo[MAX_ADDRESS_SIZE];
+    char addressOne[13];
+    char addressTwo[13];
     int memoryTotal = 0;
 
     FILE *fp;
     // Example file
-    fp = fopen(map, "r");
+    fp = fopen("test", "r");
     // Counter for spaces until we reach the inode
-    int spaces = 0;
+    int counter = 0;
 
     // Reads until end of line and stores into line
     while (EOF != fscanf(fp, "%[^\n]\n", line))
     {
         // Looping over line
-        for (int i = 0; i < MAX_LINE_SIZE; i++)
+        for (int i = 0; i < 1024; i++)
         {
             char temp = line[i];
             if (temp == ' ')
             {
-                spaces++;
+                counter++;
             }
             // If we have reached the part in the line where the inode is, replace all further indexes to EOL char
-            if (spaces == 4)
+            if (counter == 4)
             {
                 // This will be the second character after the first number in the inode
                 line[i + 2] = '\0';
@@ -53,7 +38,7 @@ int getProcMemoryInfo(int pid, char map[MAX_FILE_LENGTH])
                 if (line[i + 1] == '0')
                 {
                     // Print the line as it stands
-                    // printf("%s\n", line);
+                    printf("%s\n", line);
 
                     // Store the first listed address to address two
                     for (int j = 0; j < 12; j++)
@@ -75,25 +60,20 @@ int getProcMemoryInfo(int pid, char map[MAX_FILE_LENGTH])
                     long addressTwoLong = strtol(addressTwo, NULL, 16);
 
                     // We have finally gotten the memory difference!
-                    long memoryUsed = (addressOneLong - addressTwoLong);
-                    // Kilobytes
-                    //long memoryUsed = (addressOneLong - addressTwoLong) / 1000;
+                    long memoryUsed = (addressOneLong - addressTwoLong) / 1000;
                     memoryTotal += memoryUsed;
 
-                    // printf("Address One: %ld (hex)\n", addressOneLong);
-                    // printf("Address Two: %ld (hex)\n", addressTwoLong);
-                    // printf("Equals: %ldK\n\n", memoryUsed);
+                    printf("Address One: %ld (hex)\n", addressOneLong);
+                    printf("Address Two: %ld (hex)\n", addressTwoLong);
+                    printf("Equals: %ldK\n\n", memoryUsed);
                 }
                 // Reset counter for new line
-                spaces = 0;
-                // Break out and begin checking the next line if not EOF
+                counter = 0;
                 break;
             }
         }
     }
-    // Kilobytes
-    //printf("This process is using %dK total memory\n", memoryTotal);
+    printf("This process is using %dK total memory\n", memoryTotal);
     fclose(fp);
-
-    return memoryTotal;
+    return 0;
 }
