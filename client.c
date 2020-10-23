@@ -18,6 +18,7 @@
 Usage: controller <address> <port> {[-o out_file] \
 [-log log_file][-t seconds] <file> [arg...] | mem \
 [pid] | memkill <percent>}\n"
+#define MINIMUM_ARGS 3
 
 void stderr_help_text_exit1() {
     fprintf(stderr, HELP_TEXT);
@@ -31,7 +32,7 @@ int main(int argc, char *argv[])
     int PORT_NO;
     // int OUTPUT_ARG_NUM = 0;
     // int LOG_ARG_NUM = 0;
-    int program_arg = 3;
+    int program_arg = MINIMUM_ARGS;
     struct hostent *he;
     struct sockaddr_in their_addr; /* connector's address information */
 
@@ -42,16 +43,10 @@ int main(int argc, char *argv[])
             printf(HELP_TEXT);
             exit(1);
         }
-    } else if (argv[1] == NULL) // else if == to null
-    {
-        // printf("NULL\n");
-        stderr_help_text_exit1();
     } 
-
-    // Quit if args are less then 3
-    if (argc < 3)
+    // Quit if args are less then MINIMUM number of arguments 
+    else if (argc < MINIMUM_ARGS)
     {
-        printf("Less then 3\n");
         stderr_help_text_exit1();
     }
 
@@ -90,40 +85,28 @@ int main(int argc, char *argv[])
     // char argsTimeFile[MAX_BUFFER_SIZE];
     // memset(&argsTimeFile, 0, sizeof(argsTimeFile));
     // Loop through the arguments to find optional Arguments  
-    // This include '-o' '-log' '-t' 'mem' 'memkill' Arguments 
+    // This include '-o' '-log' '-t' 'mem' 'memkill' Arguments
+
+    int log_arg_location = __INT_MAX__, out_arg_location = __INT_MAX__;
     for (int i = 2; i < argc; i++) {
         if (strcmp("-o", argv[i]) == 0) {
-            // strcat(optionalArgs, argv[i]);
-            // strcat(optionalArgs, " ");
-            // strcat(optionalArgs, argv[i+1]);
-            // strcat(optionalArgs, " ");
             if (program_arg < i + 2)
             {
-                program_arg = i+2;
+                out_arg_location = i;
+                program_arg = i + 2;
             }
-
             strcat(argsOutFile, argv[i]);
             strcat(argsOutFile, " ");
             strcat(argsOutFile, argv[i + 1]);
-            // strcat(argsOutFile, " ");
         }
         else if (strcmp("-log", argv[i]) == 0)
         {
-                // strcat(optionalArgs, argv[i]);
-                // strcat(optionalArgs, " ");
-                // strcat(optionalArgs, argv[i + 1]);
-                // strcat(optionalArgs, " ");
-                // if (program_arg < i + 2)
-                // {
-                //     program_arg = i + 2;
-                // }
-
             strcat(argsLogFile, argv[i]);
             strcat(argsLogFile, " ");
             strcat(argsLogFile, argv[i + 1]);
-            // strcat(argsLogFile, " ");
             if (program_arg < i + 2)
             {
+                log_arg_location = i;
                 program_arg = i + 2;
             }
         }
@@ -134,6 +117,18 @@ int main(int argc, char *argv[])
         //     strcat(argsTimeFile, argv[i + 1]);
         //     strcat(argsTimeFile, " ");
         // }
+    }
+
+// If Outfile arg location is != MAX INT
+    if (out_arg_location != __INT_MAX__)
+    {
+        // If Outfile arg location is greater than Logfile Arg Location
+        // Send Error Help Text and exit
+        if (out_arg_location > log_arg_location)
+        {
+            // Log is less then out
+            stderr_help_text_exit1();
+        }
     }
 
     // Argument contains the program the client wishes to run
