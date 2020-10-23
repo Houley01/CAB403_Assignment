@@ -20,6 +20,11 @@
 
 #define TERMINATE_TIMEOUT 10
 
+int sockfd;
+
+// Setting up thread pool
+pthread_t p_threads[NUM_HANDLER_THREADS];
+
 pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
 int num_requests = 0;
@@ -83,7 +88,9 @@ void manage_memory_info(int pid, int memory)
 
     if (pid_does_exist && read_memory != NULL)
     {
+        //char *time = timestamp();
         read_memory->timestamp = timestamp();
+        //free(time);
         if (memory != -1)
         {
             read_memory->memory = memory;
@@ -106,7 +113,9 @@ void manage_memory_info(int pid, int memory)
         }
 
         new_memory_info->pid = pid;
+        //char *time = timestamp();
         new_memory_info->timestamp = timestamp();
+        //free(time);
         new_memory_info->memory = memory;
         new_memory_info->active = true;
 
@@ -197,11 +206,59 @@ struct request *get_request()
 
 void exit_handler(int SIG)
 {
-    // TODO
-    // - Kill all children process here
-    // - Remove all allocated memory (if any)
+    // Close socket connection
+    close(sockfd);
 
-    printf("%s - Exiting overseer due to: CTRL^C\n", timestamp());
+    for (int i = 0; i < 5; i++)
+    {
+        pthread_cancel(p_threads[i]);
+        //pthread_cond_signal(&got_request);
+        pthread_mutex_unlock(&request_mutex);
+        printf("Destroying thread: %d\n", i);
+        pthread_join(p_threads[i], NULL);
+    }
+
+    printf("Destroyed threads.\n");
+
+    sleep(2);
+
+    char *timePointer = NULL;
+
+    // Not too sure how to clean up the requests when the list actively moves
+    // Maybe checking all threads to see if they're running jobs + the global list is the only way
+    // struct request *requestClean = requestsCurrent;
+    // while (requestClean != NULL)
+    // {
+    //     printf("Request in process, getting cleaned.\n");
+    //     struct request *temp = requestClean;
+    //     free(requestClean->outfile);
+    //     free(requestClean->args);
+    //     free(requestClean->logfile);
+    //     requestClean = requestClean->next;
+    //     free(temp);
+    // }
+
+    // Killing all child processes and allocated memory
+
+    while (add_memory_start != NULL)
+    {
+        struct pidMemoryInfo *temp = add_memory_start;
+        if (add_memory_start->active)
+        {
+            kill(add_memory_start->pid, SIGKILL);
+            time_t t = time(&t);
+            timePointer = timestamp();
+            printf("%s - SIGKILL sent to pid %d\n", timePointer, add_memory_start->pid);
+            free(timePointer);
+        }
+        free(add_memory_start->timestamp);
+        add_memory_start = add_memory_start->next;
+        free(temp);
+    }
+
+    timePointer = timestamp();
+    printf("%s - Exiting overseer due to: CTRL^C\n", timePointer);
+    free(timePointer);
     exit(0);
 }
 
@@ -219,6 +276,7 @@ int handle_request(struct request *a_request, int thread_id)
     int outFile = 0;
     int outFileFd = 0;
     int outFileFdErr = 0;
+    char *time = NULL;
     // Contains the filename of the log file. For some reason, this buffer is a workaround for a memory bug?..
     char logBuffer[MAX_BUFFER_SIZE];
     if (a_request->logfile != NULL)
@@ -279,8 +337,9 @@ int handle_request(struct request *a_request, int thread_id)
         }
     }
 
-    fprintf(stdout, "%s - Attempting to execute '%s'...\n", timestamp(), a_request->program);
-
+    time = timestamp();
+    fprintf(stdout, "%s - Attempting to execute '%s'...\n", time, a_request->program);
+    free(time);
     if (a_request->logfile != NULL)
     {
         // Close the log file fd and return stdout to the screen
@@ -450,11 +509,15 @@ int handle_request(struct request *a_request, int thread_id)
                     switch (term)
                     {
                     case 0: // Program terminated successfully.
-                        printf("%s - %d has been terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(SIGTERM));
+                        time = timestamp();
+                        printf("%s - %d has been terminated with status code %d\n", time, pid, WEXITSTATUS(SIGTERM));
+                        free(time);
                         break;
                     case -1: // If for some reason we cannot terminate the program by asking nicely.
                         sleep(5);
-                        printf("%s - sent SIGKILL to %d\n", timestamp(), pid);
+                        time = timestamp();
+                        printf("%s - sent SIGKILL to %d\n", time, pid);
+                        free(time);
                         term = kill(pid, SIGKILL);
                         break;
                     // Error handling
@@ -485,12 +548,16 @@ int handle_request(struct request *a_request, int thread_id)
                 {
                     if (retVal == -1)
                     {
-                        fprintf(stdout, "%s - Could not execute '%s'\n", timestamp(), a_request->program);
+                        time = timestamp();
+                        fprintf(stdout, "%s - Could not execute '%s'\n", time, a_request->program);
+                        free(time);
                     }
                     else
                     {
-                        fprintf(stdout, "%s - '%s' has been executed with PID %d\n", timestamp(), a_request->program, pid);
-                        fprintf(stdout, "%s - PID %d has terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(status));
+                        time = timestamp();
+                        fprintf(stdout, "%s - '%s' has been executed with PID %d\n", time, a_request->program, pid);
+                        fprintf(stdout, "%s - PID %d has terminated with status code %d\n", time, pid, WEXITSTATUS(status));
+                        free(time);
                     }
                 }
             }
@@ -500,12 +567,16 @@ int handle_request(struct request *a_request, int thread_id)
             {
                 if (retVal == -1)
                 {
-                    fprintf(stdout, "%s - Could not execute '%s'\n", timestamp(), a_request->program);
+                    time = timestamp();
+                    fprintf(stdout, "%s - Could not execute '%s'\n", time, a_request->program);
+                    free(time);
                 }
                 else
                 {
-                    fprintf(stdout, "%s - '%s' has been executed with PID %d\n", timestamp(), a_request->program, pid);
-                    fprintf(stdout, "%s - PID %d has terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(status));
+                    time = timestamp();
+                    fprintf(stdout, "%s - '%s' has been executed with PID %d\n", time, a_request->program, pid);
+                    fprintf(stdout, "%s - PID %d has terminated with status code %d\n", time, pid, WEXITSTATUS(status));
+                    free(time);
                 }
             }
         }
@@ -536,6 +607,8 @@ int handle_request(struct request *a_request, int thread_id)
 
 void *handle_requests_loop(void *data)
 {
+    // When overseer is killed, need to ensure that all threads will cancel and join once they are finished their job
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
     struct request *a_request;
     int thread_id = *((int *)data);
     // Debug info
@@ -544,7 +617,6 @@ void *handle_requests_loop(void *data)
 
     while (1)
     {
-        // sleep(1);
         if (num_requests > 0)
         {
             // Debug info
@@ -554,6 +626,9 @@ void *handle_requests_loop(void *data)
             {
                 pthread_mutex_unlock(&request_mutex);
                 handle_request(a_request, thread_id);
+                free(a_request->outfile);
+                free(a_request->args);
+                free(a_request->logfile);
                 free(a_request);
                 //pthread_mutex_lock(&request_mutex);
             }
@@ -592,7 +667,7 @@ int main(int argc, char *argv[])
     int port = atoi(argv[1]);
 
     /* generate the socket */
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1)
     {
         perror("Socked returned error");
@@ -637,9 +712,6 @@ int main(int argc, char *argv[])
     printf("Server successfully setup\n");
     printf("Now listening for requests...\n\n");
 
-    // Setting up thread pool
-    pthread_t p_threads[NUM_HANDLER_THREADS];
-
     pthread_mutex_init(&request_mutex, NULL);
     pthread_cond_init(&got_request, NULL);
 
@@ -659,7 +731,7 @@ int main(int argc, char *argv[])
     }
 
     int request_counter = 0;
-
+    char *time = NULL;
     while (1)
     {
         sin_size = sizeof(struct sockaddr_in);
@@ -674,11 +746,15 @@ int main(int argc, char *argv[])
             // Connection from a client was successfully made to the overseer!
             if (file_mutex_activated)
             {
-                snprintf(new_connection_buffer, sizeof(new_connection_buffer), "%s - Connection received from %s\n", timestamp(), inet_ntoa(their_addr.sin_addr));
+                time = timestamp();
+                snprintf(new_connection_buffer, sizeof(new_connection_buffer), "%s - Connection received from %s\n", time, inet_ntoa(their_addr.sin_addr));
+                free(time);
             }
             else
             {
-                fprintf(stdout, "%s - Connection received from %s\n", timestamp(), inet_ntoa(their_addr.sin_addr));
+                time = timestamp();
+                fprintf(stdout, "%s - Connection received from %s\n", time, inet_ntoa(their_addr.sin_addr));
+                free(time);
             }
 
             char **outfileArg = NULL;
