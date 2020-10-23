@@ -121,7 +121,7 @@ void exit_handler(int SIG)
     close(sockfd);
 
     pid_t parent = getppid();
-    kill(-parent, SIGKILL);
+    // kill(-parent, SIGKILL);
 
 
 
