@@ -17,10 +17,16 @@
 #define NUM_HANDLER_THREADS 5
 #define NUM_OF_REQUESTS 10
 #define MAX_BUFFER_SIZE 4096
-
+#define NUM_OF_BUFFERED_REQUESTS 30
 #define TERMINATE_TIMEOUT 10
+#define CONNECT_MSG_BUFFER_SIZE 60
 
 int sockfd;
+int new_fd;
+
+char *connectionMsgBuffer[NUM_OF_BUFFERED_REQUESTS];
+int msgBufferPointer = 0;
+int msgBufferCounter = 0;
 
 // Setting up thread pool
 pthread_t p_threads[NUM_HANDLER_THREADS];
@@ -63,6 +69,32 @@ struct pidMemoryInfo
 
 struct pidMemoryInfo *add_memory_start = NULL;
 struct pidMemoryInfo *add_memory_last = NULL;
+
+// If a request is performing redirection to an out/log file, once it has finished,
+// it will then call this function to check if there were any connections made during
+// the mutex being locked. This function will print to stdout all of those buffered
+// messages to stdout and unlock the mutex.
+void connection_msg_buffer_check()
+{
+    if (msgBufferPointer > 0)
+    {
+        msgBufferCounter = 0;
+        while (msgBufferPointer > 0)
+        {
+            fprintf(stdout, "%s", connectionMsgBuffer[msgBufferCounter]);
+            free(connectionMsgBuffer[msgBufferCounter]);
+            msgBufferCounter++;
+            msgBufferPointer--;
+        }
+        if (msgBufferPointer == 0)
+        {
+            msgBufferCounter = 0;
+        }
+    }
+    pthread_mutex_unlock(&file_mutex);
+    pthread_cond_signal(&got_file);
+    file_mutex_activated = false;
+}
 
 // Manage memory info to the memory linked list of running processes
 // Memory will either be the memory of the current running process, or -1
@@ -306,7 +338,7 @@ int handle_request(struct request *a_request, int thread_id)
         //int test = pthread_mutex_trylock(&file_mutex);
         //printf("%d\n", test);
         printf("Thread %d locked\n", thread_id);
-        sleep(2);
+        sleep(10);
         //printf("%p\n", a_request->logfile);
         // Duplicate stdout fd to be used for restoring stdout to the screen
         stdoutFd = dup(STDOUT_FILENO);
@@ -347,10 +379,7 @@ int handle_request(struct request *a_request, int thread_id)
         close(logFileFd);
         dup2(stdoutFd, STDOUT_FILENO);
         close(stdoutFd);
-        pthread_mutex_unlock(&file_mutex);
-        pthread_cond_signal(&got_file);
-        // printf("Thread %d unlocked\n", thread_id);
-        file_mutex_activated = false;
+        connection_msg_buffer_check();
     }
 
     // Create a fork before calling execlp so we don't replace the overseer with the program the client wishes to run!
@@ -415,10 +444,7 @@ int handle_request(struct request *a_request, int thread_id)
                 dup2(stderrFd, STDERR_FILENO);
                 close(stdoutFd);
                 close(stderrFd);
-                pthread_mutex_unlock(&file_mutex);
-                pthread_cond_signal(&got_file);
-                // printf("Thread %d unlocked\n", thread_id);
-                file_mutex_activated = false;
+                connection_msg_buffer_check();
             }
         }
         else
@@ -594,10 +620,8 @@ int handle_request(struct request *a_request, int thread_id)
         close(logFileFd);
         dup2(stdoutFd, STDOUT_FILENO);
         close(stdoutFd);
-        pthread_mutex_unlock(&file_mutex);
-        pthread_cond_signal(&got_file);
         printf("Thread %d unlocked\n", thread_id);
-        file_mutex_activated = false;
+        connection_msg_buffer_check();
     }
 
     // Let the Overseer know that the job has finished
@@ -707,7 +731,6 @@ int main(int argc, char *argv[])
 
     struct sockaddr_in their_addr;
     socklen_t sin_size;
-    int new_fd;
 
     printf("Server successfully setup\n");
     printf("Now listening for requests...\n\n");
@@ -735,8 +758,9 @@ int main(int argc, char *argv[])
     while (1)
     {
         sin_size = sizeof(struct sockaddr_in);
-        if ((new_fd = accept(sockfd, (struct sockaddr *)&their_addr,
-                             &sin_size)) == -1)
+        new_fd = accept(sockfd, (struct sockaddr *)&their_addr,
+                        &sin_size);
+        if (new_fd == -1)
         {
             perror("accept");
             continue;
@@ -744,11 +768,19 @@ int main(int argc, char *argv[])
         else
         {
             // Connection from a client was successfully made to the overseer!
-            if (file_mutex_activated)
+            // If a thread is currently re-directing stdout, connection messages will get stored in a buffer
+            // then printed out to stdout once the logging to the thread's out/log file is finished.
+            // Otherwise, it will log to stdout!
+            if (file_mutex_activated == true)
             {
+                char msg[CONNECT_MSG_BUFFER_SIZE];
                 time = timestamp();
-                snprintf(new_connection_buffer, sizeof(new_connection_buffer), "%s - Connection received from %s\n", time, inet_ntoa(their_addr.sin_addr));
+                snprintf(msg, sizeof(msg), "%s - Connection received from %s\n", time, inet_ntoa(their_addr.sin_addr));
                 free(time);
+                connectionMsgBuffer[msgBufferCounter] = malloc(CONNECT_MSG_BUFFER_SIZE * sizeof(char));
+                strcpy(connectionMsgBuffer[msgBufferCounter], msg);
+                msgBufferCounter++;
+                msgBufferPointer++;
             }
             else
             {
