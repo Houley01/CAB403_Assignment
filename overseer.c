@@ -85,6 +85,43 @@ struct pidHistory
 struct pidMemoryInfo *add_memory_start = NULL;
 struct pidMemoryInfo *add_memory_last = NULL;
 
+void send_pid_memory_info(int fd, char **pid)
+{
+    pthread_mutex_trylock(&memory_mutex);
+    memory_mutex_activated = true;
+    struct pidMemoryInfo *memtest = add_memory_start;
+
+    sleep(0.3);
+    if (memtest != NULL)
+    {
+        uint16_t pidCountBuffer = htons(memtest->historyCounter);
+        printf("History counter: %d\n", memtest->historyCounter);
+        send(fd, &pidCountBuffer, sizeof(uint16_t), 0);
+        while (memtest != NULL)
+        {
+            // Below is suited for getting info from specific pid since we need to know all the history
+            //struct pidHistory *history = add_memory_start->history_start;
+            char sendTime[20];
+            int sendMemory = 0;
+            char memoryInfo[MAX_BUFFER_SIZE];
+            int pidArg = atoi(pid[0]);
+            while (memtest->history_start != NULL && pidArg)
+            {
+                strcpy(sendTime, memtest->history_start->timestamp);
+                sendMemory = memtest->history_start->memory;
+                snprintf(memoryInfo, sizeof(memoryInfo), "%s %d\n", sendTime, sendMemory);
+                send(fd, &memoryInfo, MAX_BUFFER_SIZE, 0);
+                memtest->history_start = memtest->history_start->next;
+            }
+            memtest = memtest->next;
+        }
+    }
+
+    pthread_mutex_unlock(&memory_mutex);
+    pthread_cond_signal(&got_memory);
+    memory_mutex_activated = false;
+}
+
 void send_memory_info(int fd)
 {
     pthread_mutex_trylock(&memory_mutex);
@@ -111,7 +148,7 @@ void send_memory_info(int fd)
         if (memtest->active == true)
         {
             char memoryInfo[MAX_BUFFER_SIZE];
-            snprintf(memoryInfo, sizeof(memoryInfo), "%s | PID: %d | Memory: %d | Program: %s | Args: %s\n", memtest->history_end->timestamp, memtest->pid, memtest->history_end->memory, memtest->program, memtest->args);
+            snprintf(memoryInfo, sizeof(memoryInfo), "%d %d %s %s\n", memtest->pid, memtest->history_end->memory, memtest->program, memtest->args);
             send(fd, &memoryInfo, MAX_BUFFER_SIZE, 0);
         }
         memtest = memtest->next;
@@ -232,7 +269,7 @@ void manage_memory_info(int pid, int memory, char *program, int numOfArgs, char 
         new_memory_info->program = malloc(sizeof(program) * sizeof(char));
         strcpy(new_memory_info->program, program);
         new_memory_info->args = malloc(sizeof(args) * sizeof(char));
-        for (int i = 1; i < numOfArgs; i++)
+        for (int i = 0; i < numOfArgs; i++)
         {
             strcat(new_memory_info->args, args[i]);
             strcat(new_memory_info->args, " ");
@@ -412,7 +449,14 @@ int handle_request(struct request *a_request, int thread_id)
         {
             pthread_cond_wait(&got_memory, &memory_mutex);
         }
-        send_memory_info(a_request->fd);
+        if (a_request->args != NULL)
+        {
+            send_pid_memory_info(a_request->fd, a_request->args);
+        }
+        else
+        {
+            send_memory_info(a_request->fd);
+        }
 
         // Let the Overseer know that the job has finished
         close(a_request->fd);
@@ -919,8 +963,53 @@ int main(int argc, char *argv[])
 
             if (strcmp(programBuffer, "mem") == 0)
             {
-                add_request(request_counter, new_fd, programBuffer, 0, NULL, NULL, NULL, &request_mutex, &got_request);
-                request_counter++;
+                uint16_t test;
+
+                if (recv(new_fd, &test, sizeof(uint16_t), 0) == -1)
+                {
+                    perror("recv");
+                    exit(1);
+                }
+                test = ntohs(test);
+
+                if (test == 0)
+                {
+                    add_request(request_counter, new_fd, programBuffer, 0, NULL, NULL, NULL, &request_mutex, &got_request);
+                    request_counter++;
+                }
+                else
+                {
+                    char **args = NULL;
+                    char argsBuffer[MAX_BUFFER_SIZE];
+                    if (recv(new_fd, &argsBuffer, MAX_BUFFER_SIZE, 0) == -1)
+                    {
+                        perror("recv");
+                        exit(1);
+                    }
+                    argsBuffer[MAX_BUFFER_SIZE] = '\0';
+                    //args[0] = malloc(sizeof(argsBuffer) * sizeof(char));
+                    char *p = strtok(argsBuffer, " ");
+                    int spaces = 0;
+
+                    while (p != NULL)
+                    {
+                        spaces++;
+                        args = realloc(args, sizeof(char *) * spaces);
+                        if (args == NULL)
+                        {
+                            // Break out if realloc fails. Probably will need to set the args list to NULL to send zero args for the sake of it I guess
+                            break;
+                        }
+                        args[spaces - 1] = p;
+                        p = strtok(NULL, " ");
+                    }
+
+                    // Add space for NULL char in args list
+                    args = realloc(args, sizeof(char *) * (spaces + 1));
+                    args[spaces] = 0;
+                    add_request(request_counter, new_fd, programBuffer, 1, args, NULL, NULL, &request_mutex, &got_request);
+                    request_counter++;
+                }
             }
             else
             {
@@ -949,8 +1038,6 @@ int main(int argc, char *argv[])
                     args[spaces - 1] = p;
                     p = strtok(NULL, " ");
                 }
-
-                printf("%d\n", spaces);
 
                 // Add space for NULL char in args list
                 args = realloc(args, sizeof(char *) * (spaces + 1));

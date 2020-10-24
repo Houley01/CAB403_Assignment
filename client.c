@@ -27,7 +27,7 @@ void stderr_help_text_exit1()
 
 int main(int argc, char *argv[])
 {
-    int sockfd, numbytes;
+    int sockfd;
     bool argument_safe = true;
     int PORT_NO;
     // int OUTPUT_ARG_NUM = 0;
@@ -142,9 +142,9 @@ int main(int argc, char *argv[])
     char *program = argv[program_arg];
 
     char args[MAX_BUFFER_SIZE];
-
+    args[0] = 0;
     // Get all of the arguments for the program
-    for (int i = program_arg; i < argc; i++)
+    for (int i = program_arg + 1; i < argc; i++)
     {
         strncat(args, argv[i], sizeof(argv[i]));
         printf("%d:%s\n", i, argv[i]);
@@ -187,8 +187,26 @@ int main(int argc, char *argv[])
 
         if (strcmp(program, "mem") == 0)
         {
+            // if (strcmp(args, ""))
+            // {
+            //     printf("yessss\n");
+            // }
             send(sockfd, program, MAX_BUFFER_SIZE, 0);
             fflush(stdout);
+            sleep(0.3);
+
+            uint16_t isPidHistory;
+            if (strlen(args) > 0)
+            {
+                isPidHistory = htons(1);
+                send(sockfd, &isPidHistory, sizeof(uint16_t), 0);
+                send(sockfd, &args, MAX_BUFFER_SIZE, 0);
+            }
+            else
+            {
+                isPidHistory = htons(0);
+                send(sockfd, &isPidHistory, sizeof(uint16_t), 0);
+            }
 
             sleep(1);
 
@@ -207,7 +225,7 @@ int main(int argc, char *argv[])
             while (numOfHistoryItems > 0)
             {
                 char buffybuffbuff[MAX_BUFFER_SIZE];
-
+                sleep(0.3);
                 if (recv(sockfd, &buffybuffbuff, MAX_BUFFER_SIZE, 0) == -1)
                 {
                     perror("recv");
