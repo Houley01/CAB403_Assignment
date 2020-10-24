@@ -88,12 +88,13 @@ struct pidMemoryInfo *add_memory_last = NULL;
 void send_memory_info(int fd)
 {
     pthread_mutex_trylock(&memory_mutex);
+    memory_mutex_activated = true;
+    struct pidMemoryInfo *memtest = add_memory_start;
+
+    sleep(0.3);
     uint16_t pidCountBuffer = htons(pidCount);
     printf("History counter: %d\n", pidCount);
     send(fd, &pidCountBuffer, sizeof(uint16_t), 0);
-
-    struct pidMemoryInfo *memtest = add_memory_start;
-
     while (memtest != NULL)
     {
         // Below is suited for getting info from specific pid since we need to know all the history
@@ -112,14 +113,13 @@ void send_memory_info(int fd)
             char memoryInfo[MAX_BUFFER_SIZE];
             snprintf(memoryInfo, sizeof(memoryInfo), "%s | PID: %d | Memory: %d | Program: %s | Args: %s\n", memtest->history_end->timestamp, memtest->pid, memtest->history_end->memory, memtest->program, memtest->args);
             send(fd, &memoryInfo, MAX_BUFFER_SIZE, 0);
-            memtest = memtest->next;
         }
+        memtest = memtest->next;
     }
-
-    memtest = add_memory_start;
 
     pthread_mutex_unlock(&memory_mutex);
     pthread_cond_signal(&got_memory);
+    memory_mutex_activated = false;
 }
 
 // If a request is performing redirection to an out/log file, once it has finished,
