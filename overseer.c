@@ -49,6 +49,7 @@ struct request
     int number;
     int fd;
     char *program;
+    int numOfArgs;
     char **args;
     char **outfile;
     char **logfile;
@@ -63,11 +64,16 @@ struct pidMemoryInfo
     int pid;
     bool active;
     int historyCounter;
-    struct pidMemoryInfo *next;
+    char *program;
+    char *args;
     struct pidHistory *history_start;
     struct pidHistory *history_end;
-    struct pidHistory *history;
+    struct request *request;
+    struct pidMemoryInfo *next;
 };
+
+// For all memory
+uint16_t pidCount = 0;
 
 struct pidHistory
 {
@@ -78,6 +84,43 @@ struct pidHistory
 
 struct pidMemoryInfo *add_memory_start = NULL;
 struct pidMemoryInfo *add_memory_last = NULL;
+
+void send_memory_info(int fd)
+{
+    pthread_mutex_trylock(&memory_mutex);
+    uint16_t pidCountBuffer = htons(pidCount);
+    printf("History counter: %d\n", pidCount);
+    send(fd, &pidCountBuffer, sizeof(uint16_t), 0);
+
+    struct pidMemoryInfo *memtest = add_memory_start;
+
+    while (memtest != NULL)
+    {
+        // Below is suited for getting info from specific pid since we need to know all the history
+        //printf("Num of history items: %d\n", memtest->historyCounter);
+        //struct pidHistory *history = add_memory_start->history_start;
+        // char sendTime[20];
+        // int sendMemory = 0;
+        // while (memtest->history_start != NULL)
+        // {
+        //     strcpy(sendTime, memtest->history_start->timestamp);
+        //     sendMemory = memtest->history_start->memory;
+        //     memtest->history_start = memtest->history_start->next;
+        // }
+        if (memtest->active == true)
+        {
+            char memoryInfo[MAX_BUFFER_SIZE];
+            snprintf(memoryInfo, sizeof(memoryInfo), "%s | PID: %d | Memory: %d | Program: %s | Args: %s\n", memtest->history_end->timestamp, memtest->pid, memtest->history_end->memory, memtest->program, memtest->args);
+            send(fd, &memoryInfo, MAX_BUFFER_SIZE, 0);
+            memtest = memtest->next;
+        }
+    }
+
+    memtest = add_memory_start;
+
+    pthread_mutex_unlock(&memory_mutex);
+    pthread_cond_signal(&got_memory);
+}
 
 // If a request is performing redirection to an out/log file, once it has finished,
 // it will then call this function to check if there were any connections made during
@@ -140,7 +183,7 @@ void manage_history_info(struct pidMemoryInfo *memoryData, int memory)
 // Manage memory info to the memory linked list of running processes
 // Memory will either be the memory of the current running process, or -1
 // If -1, it has been indicated that the process is no longer running
-void manage_memory_info(int pid, int memory)
+void manage_memory_info(int pid, int memory, char *program, int numOfArgs, char **args)
 {
     pthread_mutex_trylock(&memory_mutex);
     struct pidMemoryInfo *read_memory = add_memory_start;
@@ -164,13 +207,13 @@ void manage_memory_info(int pid, int memory)
         if (memory != -1)
         {
             read_memory->active = true;
+            manage_history_info(read_memory, memory);
         }
         else
         {
             read_memory->active = false;
+            pidCount--;
         }
-
-        manage_history_info(read_memory, memory);
     }
     else
     {
@@ -186,6 +229,14 @@ void manage_memory_info(int pid, int memory)
 
         new_memory_info->pid = pid;
         new_memory_info->active = true;
+        new_memory_info->program = malloc(sizeof(program) * sizeof(char));
+        strcpy(new_memory_info->program, program);
+        new_memory_info->args = malloc(sizeof(args) * sizeof(char));
+        for (int i = 1; i < numOfArgs; i++)
+        {
+            strcat(new_memory_info->args, args[i]);
+            strcat(new_memory_info->args, " ");
+        }
 
         if (add_memory_start == NULL)
         {
@@ -197,6 +248,7 @@ void manage_memory_info(int pid, int memory)
             add_memory_last->next = new_memory_info;
             add_memory_last = new_memory_info;
         }
+        pidCount++;
         manage_history_info(new_memory_info, memory);
     }
 
@@ -208,6 +260,7 @@ void manage_memory_info(int pid, int memory)
 void add_request(int request_num,
                  int fd,
                  char *program,
+                 int numOfArgs,
                  char **args,
                  char **outfile,
                  char **logfile,
@@ -225,6 +278,7 @@ void add_request(int request_num,
     a_request->fd = fd;
     a_request->number = request_num;
     a_request->program = program;
+    a_request->numOfArgs = numOfArgs;
     a_request->args = args;
     a_request->outfile = outfile;
     a_request->logfile = logfile;
@@ -348,6 +402,27 @@ int handle_request(struct request *a_request, int thread_id)
     char *time = NULL;
     // Contains the filename of the log file. For some reason, this buffer is a workaround for a memory bug?..
     char logBuffer[MAX_BUFFER_SIZE];
+
+    if (strcmp(a_request->program, "mem") == 0)
+    {
+        printf("got mem\n");
+
+        //send(a_request->fd, "test123boi", MAX_BUFFER_SIZE, 0);
+        while (memory_mutex_activated)
+        {
+            pthread_cond_wait(&got_memory, &memory_mutex);
+        }
+        send_memory_info(a_request->fd);
+
+        // Let the Overseer know that the job has finished
+        close(a_request->fd);
+        return 1;
+    }
+    else
+    {
+        printf("Didn't match...\n");
+    }
+
     if (a_request->logfile != NULL)
     {
         snprintf(logBuffer, sizeof(logBuffer), "%s", a_request->logfile[1]);
@@ -497,7 +572,8 @@ int handle_request(struct request *a_request, int thread_id)
                     pthread_cond_wait(&got_memory, &memory_mutex);
                 }
                 memory_mutex_activated = true;
-                manage_memory_info(pid, getProcMemoryInfo(pid, memoryRead));
+                sleep(0.2);
+                manage_memory_info(pid, getProcMemoryInfo(pid, memoryRead), a_request->program, a_request->numOfArgs, a_request->args);
                 memory_mutex_activated = false;
                 sleep(1);
             }
@@ -509,7 +585,7 @@ int handle_request(struct request *a_request, int thread_id)
                 pthread_cond_wait(&got_memory, &memory_mutex);
             }
             memory_mutex_activated = true;
-            manage_memory_info(pid, -1);
+            manage_memory_info(pid, -1, a_request->program, a_request->numOfArgs, a_request->args);
             memory_mutex_activated = false;
 
             while (file_mutex_activated)
@@ -832,59 +908,6 @@ int main(int argc, char *argv[])
                 free(time);
             }
 
-            char **outfileArg = NULL;
-            char **logfileArg = NULL;
-
-            int index = 0;
-            char temp[MAX_BUFFER_SIZE];
-            if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
-            {
-                perror("recv");
-                exit(1);
-            }
-            temp[MAX_BUFFER_SIZE - 1] = 0;
-
-            if (temp[0] != '\0')
-            {
-                char *token = strtok(temp, " ");
-                while (token != NULL)
-                {
-                    outfileArg = realloc(outfileArg, sizeof(char *) * index);
-                    outfileArg[index] = token;
-                    token = strtok(NULL, " ");
-                    index++;
-                }
-                outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
-                outfileArg[index] = 0;
-            }
-
-            // Log FILE
-            int indexLog = 0;
-            char tempLog[MAX_BUFFER_SIZE];
-            tempLog[0] = '\0';
-
-            if (recv(new_fd, &tempLog, MAX_BUFFER_SIZE, 0) == -1)
-            {
-                perror("recv");
-                exit(1);
-            }
-            tempLog[MAX_BUFFER_SIZE] = 0;
-
-            if (tempLog[0] != '\0')
-            {
-                // Take the first char to SPACE, then place the string into a char[]
-                char *tokenLog = strtok(tempLog, " ");
-                while (tokenLog != NULL)
-                {
-                    logfileArg = realloc(logfileArg, sizeof(char *) * indexLog);
-                    logfileArg[indexLog] = tokenLog;
-                    tokenLog = strtok(NULL, " ");
-                    indexLog++;
-                }
-                logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
-                logfileArg[indexLog] = 0;
-            }
-
             char programBuffer[MAX_BUFFER_SIZE];
 
             if (recv(new_fd, &programBuffer, MAX_BUFFER_SIZE, 0) == -1)
@@ -894,41 +917,104 @@ int main(int argc, char *argv[])
             }
             programBuffer[MAX_BUFFER_SIZE] = '\0';
 
-            char argsBuffer[MAX_BUFFER_SIZE];
-            if (recv(new_fd, &argsBuffer, MAX_BUFFER_SIZE, 0) == -1)
+            if (strcmp(programBuffer, "mem") == 0)
             {
-                perror("recv");
-                exit(1);
+                add_request(request_counter, new_fd, programBuffer, 0, NULL, NULL, NULL, &request_mutex, &got_request);
+                request_counter++;
             }
-            argsBuffer[MAX_BUFFER_SIZE] = '\0';
-
-            // Below splits argsBuffer into substrings from it's original string (args come from client as one string)
-            char **args = NULL;
-            char *p = strtok(argsBuffer, " ");
-            int spaces = 0;
-
-            while (p != NULL)
+            else
             {
-                spaces++;
-                args = realloc(args, sizeof(char *) * spaces);
-                if (args == NULL)
+                char argsBuffer[MAX_BUFFER_SIZE];
+                if (recv(new_fd, &argsBuffer, MAX_BUFFER_SIZE, 0) == -1)
                 {
-                    // Break out if realloc fails. Probably will need to set the args list to NULL to send zero args for the sake of it I guess
-                    break;
+                    perror("recv");
+                    exit(1);
                 }
-                args[spaces - 1] = p;
-                p = strtok(NULL, " ");
+                argsBuffer[MAX_BUFFER_SIZE] = '\0';
+
+                // Below splits argsBuffer into substrings from it's original string (args come from client as one string)
+                char **args = NULL;
+                char *p = strtok(argsBuffer, " ");
+                int spaces = 0;
+
+                while (p != NULL)
+                {
+                    spaces++;
+                    args = realloc(args, sizeof(char *) * spaces);
+                    if (args == NULL)
+                    {
+                        // Break out if realloc fails. Probably will need to set the args list to NULL to send zero args for the sake of it I guess
+                        break;
+                    }
+                    args[spaces - 1] = p;
+                    p = strtok(NULL, " ");
+                }
+
+                printf("%d\n", spaces);
+
+                // Add space for NULL char in args list
+                args = realloc(args, sizeof(char *) * (spaces + 1));
+                args[spaces] = 0;
+
+                char **outfileArg = NULL;
+                char **logfileArg = NULL;
+
+                int index = 0;
+                char temp[MAX_BUFFER_SIZE];
+                if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
+                {
+                    perror("recv");
+                    exit(1);
+                }
+                temp[MAX_BUFFER_SIZE - 1] = 0;
+
+                if (temp[0] != '\0')
+                {
+                    char *token = strtok(temp, " ");
+                    while (token != NULL)
+                    {
+                        outfileArg = realloc(outfileArg, sizeof(char *) * index);
+                        outfileArg[index] = token;
+                        token = strtok(NULL, " ");
+                        index++;
+                    }
+                    outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
+                    outfileArg[index] = 0;
+                }
+
+                // Log FILE
+                int indexLog = 0;
+                char tempLog[MAX_BUFFER_SIZE];
+                tempLog[0] = '\0';
+
+                if (recv(new_fd, &tempLog, MAX_BUFFER_SIZE, 0) == -1)
+                {
+                    perror("recv");
+                    exit(1);
+                }
+                tempLog[MAX_BUFFER_SIZE] = 0;
+
+                if (tempLog[0] != '\0')
+                {
+                    // Take the first char to SPACE, then place the string into a char[]
+                    char *tokenLog = strtok(tempLog, " ");
+                    while (tokenLog != NULL)
+                    {
+                        logfileArg = realloc(logfileArg, sizeof(char *) * indexLog);
+                        logfileArg[indexLog] = tokenLog;
+                        tokenLog = strtok(NULL, " ");
+                        indexLog++;
+                    }
+                    logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
+                    logfileArg[indexLog] = 0;
+                }
+
+                // Debug memory
+                //printf("%p\n", &logfileArg);
+
+                add_request(request_counter, new_fd, programBuffer, spaces, args, outfileArg, logfileArg, &request_mutex, &got_request);
+                request_counter++;
             }
-
-            // Add space for NULL char in args list
-            args = realloc(args, sizeof(char *) * (spaces + 1));
-            args[spaces] = 0;
-
-            // Debug memory
-            //printf("%p\n", &logfileArg);
-
-            add_request(request_counter, new_fd, programBuffer, args, outfileArg, logfileArg, &request_mutex, &got_request);
-            request_counter++;
         }
     }
 

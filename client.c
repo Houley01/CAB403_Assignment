@@ -11,7 +11,6 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-
 // #define PORT_NO 54321 /* PORT Number */
 #define MAX_BUFFER_SIZE 4096
 #define HELP_TEXT "\
@@ -20,10 +19,11 @@ Usage: controller <address> <port> {[-o out_file] \
 [pid] | memkill <percent>}\n"
 #define MINIMUM_ARGS 3
 
-void stderr_help_text_exit1() {
+void stderr_help_text_exit1()
+{
     fprintf(stderr, HELP_TEXT);
     exit(1);
-} 
+}
 
 int main(int argc, char *argv[])
 {
@@ -36,15 +36,15 @@ int main(int argc, char *argv[])
     struct hostent *he;
     struct sockaddr_in their_addr; /* connector's address information */
 
-    if(argv[1] != NULL) // Need to check if the first arg is null before strcmp
+    if (argv[1] != NULL) // Need to check if the first arg is null before strcmp
     {
-        if(strcmp(argv[1], "--help") == 0)
+        if (strcmp(argv[1], "--help") == 0)
         {
             printf(HELP_TEXT);
             exit(1);
         }
-    } 
-    // Quit if args are less then MINIMUM number of arguments 
+    }
+    // Quit if args are less then MINIMUM number of arguments
     else if (argc < MINIMUM_ARGS)
     {
         stderr_help_text_exit1();
@@ -58,15 +58,20 @@ int main(int argc, char *argv[])
     }
 
     // Port Number Checking
-    for (int i = 0; argv[2][i] != '\0'; i++) {
-        if (isdigit(argv[2][i]) == 0) {
+    for (int i = 0; argv[2][i] != '\0'; i++)
+    {
+        if (isdigit(argv[2][i]) == 0)
+        {
             argument_safe = false;
-            break; 
+            break;
         }
-    } 
-    if (argument_safe == false) {
+    }
+    if (argument_safe == false)
+    {
         stderr_help_text_exit1();
-    } else {
+    }
+    else
+    {
         PORT_NO = atoi(argv[2]);
     }
 
@@ -84,12 +89,14 @@ int main(int argc, char *argv[])
 
     // char argsTimeFile[MAX_BUFFER_SIZE];
     // memset(&argsTimeFile, 0, sizeof(argsTimeFile));
-    // Loop through the arguments to find optional Arguments  
+    // Loop through the arguments to find optional Arguments
     // This include '-o' '-log' '-t' 'mem' 'memkill' Arguments
 
     int log_arg_location = __INT_MAX__, out_arg_location = __INT_MAX__;
-    for (int i = 2; i < argc; i++) {
-        if (strcmp("-o", argv[i]) == 0) {
+    for (int i = 2; i < argc; i++)
+    {
+        if (strcmp("-o", argv[i]) == 0)
+        {
             if (program_arg < i + 2)
             {
                 out_arg_location = i;
@@ -119,7 +126,7 @@ int main(int argc, char *argv[])
         // }
     }
 
-// If Outfile arg location is != MAX INT
+    // If Outfile arg location is != MAX INT
     if (out_arg_location != __INT_MAX__)
     {
         // If Outfile arg location is greater than Logfile Arg Location
@@ -140,7 +147,7 @@ int main(int argc, char *argv[])
     for (int i = program_arg; i < argc; i++)
     {
         strncat(args, argv[i], sizeof(argv[i]));
-        printf("%d:%s\n", i,argv[i]);
+        printf("%d:%s\n", i, argv[i]);
         printf("---------------\n");
         strncat(args, " ", argc); // Doesn't actually matter what int value we put here (1 causes a warning though)=
     }
@@ -174,24 +181,59 @@ int main(int argc, char *argv[])
         // send(sockfd, &programSize, sizeof(program), 0);
         // fflush(stdout);
         // if (optionalArgs[0] != NULL || optionalArgs[3] != NULL || optionalArgs[3] != NULL){
-        
-        // Output file sending data
-        send(sockfd, argsOutFile, MAX_BUFFER_SIZE, 0);
-        fflush(stdout);
-        // Log file sending data
-        send(sockfd, argsLogFile, MAX_BUFFER_SIZE, 0);
-        fflush(stdout);
 
         // send(sockfd, argsTimeFile, MAX_BUFFER_SIZE, 0);
         // fflush(stdout);
 
-        send(sockfd, program, MAX_BUFFER_SIZE, 0);
-        fflush(stdout);
-        // Sleep so the Overseer gets a chance to recive the icoming string. 
-        sleep(1);
+        if (strcmp(program, "mem") == 0)
+        {
+            send(sockfd, program, MAX_BUFFER_SIZE, 0);
+            fflush(stdout);
 
-        send(sockfd, args, MAX_BUFFER_SIZE, 0);
-        fflush(stdout);
+            sleep(1);
+
+            uint16_t buffer;
+
+            if (recv(sockfd, &buffer, sizeof(uint16_t), 0) == -1)
+            {
+                perror("recv");
+                exit(1);
+            }
+            int numOfHistoryItems = ntohs(buffer);
+
+            //printf("%s\n", test);
+            printf("Expecting %d memory history items\n", numOfHistoryItems);
+
+            while (numOfHistoryItems > 0)
+            {
+                char buffybuffbuff[MAX_BUFFER_SIZE];
+
+                if (recv(sockfd, &buffybuffbuff, MAX_BUFFER_SIZE, 0) == -1)
+                {
+                    perror("recv");
+                    exit(1);
+                }
+                printf("%s", buffybuffbuff);
+                numOfHistoryItems--;
+            }
+        }
+        {
+            send(sockfd, program, MAX_BUFFER_SIZE, 0);
+            fflush(stdout);
+
+            send(sockfd, args, MAX_BUFFER_SIZE, 0);
+            fflush(stdout);
+
+            // Output file sending data
+            send(sockfd, argsOutFile, MAX_BUFFER_SIZE, 0);
+            fflush(stdout);
+            // Log file sending data
+            send(sockfd, argsLogFile, MAX_BUFFER_SIZE, 0);
+            fflush(stdout);
+
+            // Sleep so the Overseer gets a chance to recive the icoming string.
+            sleep(1);
+        }
     }
 
     close(sockfd);
