@@ -62,6 +62,7 @@ struct pidMemoryInfo
 {
     int pid;
     bool active;
+    int historyCounter;
     struct pidMemoryInfo *next;
     struct pidHistory *history_start;
     struct pidHistory *history_end;
@@ -126,11 +127,13 @@ void manage_history_info(struct pidMemoryInfo *memoryData, int memory)
     {
         memoryData->history_start = history;
         memoryData->history_end = history;
+        memoryData->historyCounter = 1;
     }
     else
     {
         memoryData->history_end->next = history;
         memoryData->history_end = history;
+        memoryData->historyCounter++;
     }
 }
 
@@ -700,6 +703,7 @@ void *handle_requests_loop(void *data)
 
             //     while (memtest != NULL)
             //     {
+            //         printf("Num of history items: %d\n", memtest->historyCounter);
             //         //struct pidHistory *history = add_memory_start->history_start;
             //         while (memtest->history_start != NULL)
             //         {
