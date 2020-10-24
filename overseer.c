@@ -61,10 +61,18 @@ struct request *last_request = NULL;
 struct pidMemoryInfo
 {
     int pid;
-    char *timestamp;
-    int memory;
     bool active;
     struct pidMemoryInfo *next;
+    struct pidHistory *history_start;
+    struct pidHistory *history_end;
+    struct pidHistory *history;
+};
+
+struct pidHistory
+{
+    char *timestamp;
+    int memory;
+    struct pidHistory *next;
 };
 
 struct pidMemoryInfo *add_memory_start = NULL;
@@ -96,6 +104,36 @@ void connection_msg_buffer_check()
     file_mutex_activated = false;
 }
 
+// Manage history info to the history linked list of memory linked list.
+// History is the chain of information for a process timestamping what
+// it's current memory use is at the point in time.
+void manage_history_info(struct pidMemoryInfo *memoryData, int memory)
+{
+    struct pidHistory *history;
+
+    history = malloc(sizeof(struct pidHistory));
+
+    if (!history)
+    {
+        fprintf(stderr, "Adding new memory info: out of memory\n");
+        exit(1);
+    }
+
+    history->memory = memory;
+    history->timestamp = timestamp();
+
+    if (memoryData->history_start == NULL)
+    {
+        memoryData->history_start = history;
+        memoryData->history_end = history;
+    }
+    else
+    {
+        memoryData->history_end->next = history;
+        memoryData->history_end = history;
+    }
+}
+
 // Manage memory info to the memory linked list of running processes
 // Memory will either be the memory of the current running process, or -1
 // If -1, it has been indicated that the process is no longer running
@@ -120,24 +158,23 @@ void manage_memory_info(int pid, int memory)
 
     if (pid_does_exist && read_memory != NULL)
     {
-        //char *time = timestamp();
-        read_memory->timestamp = timestamp();
-        //free(time);
         if (memory != -1)
         {
-            read_memory->memory = memory;
             read_memory->active = true;
         }
         else
         {
             read_memory->active = false;
         }
+
+        manage_history_info(read_memory, memory);
     }
     else
     {
         struct pidMemoryInfo *new_memory_info;
 
-        new_memory_info = (struct pidMemoryInfo *)malloc(sizeof(struct pidMemoryInfo));
+        new_memory_info = malloc(sizeof(struct pidMemoryInfo));
+
         if (!new_memory_info)
         {
             fprintf(stderr, "Adding new memory info: out of memory\n");
@@ -145,10 +182,6 @@ void manage_memory_info(int pid, int memory)
         }
 
         new_memory_info->pid = pid;
-        //char *time = timestamp();
-        new_memory_info->timestamp = timestamp();
-        //free(time);
-        new_memory_info->memory = memory;
         new_memory_info->active = true;
 
         if (add_memory_start == NULL)
@@ -161,6 +194,7 @@ void manage_memory_info(int pid, int memory)
             add_memory_last->next = new_memory_info;
             add_memory_last = new_memory_info;
         }
+        manage_history_info(new_memory_info, memory);
     }
 
     pthread_mutex_unlock(&memory_mutex);
@@ -283,7 +317,7 @@ void exit_handler(int SIG)
             printf("%s - SIGKILL sent to pid %d\n", timePointer, add_memory_start->pid);
             free(timePointer);
         }
-        free(add_memory_start->timestamp);
+        //free(add_memory_start->timestamp);
         add_memory_start = add_memory_start->next;
         free(temp);
     }
@@ -659,19 +693,24 @@ void *handle_requests_loop(void *data)
         }
         else
         {
-            // Debug info
-            if (thread_id == 0)
-            {
-                struct pidMemoryInfo *memtest = add_memory_start;
+            // Debug info (This is how you can get all memory info)
+            // if (thread_id == 0)
+            // {
+            //     struct pidMemoryInfo *memtest = add_memory_start;
 
-                while (memtest != NULL)
-                {
-                    printf("%s | PID: %d | Memory: %d | Active: %d\n", memtest->timestamp, memtest->pid, memtest->memory, memtest->active);
-                    memtest = memtest->next;
-                }
+            //     while (memtest != NULL)
+            //     {
+            //         //struct pidHistory *history = add_memory_start->history_start;
+            //         while (memtest->history_start != NULL)
+            //         {
+            //             printf("%s | PID: %d | Memory: %d | Active: %d\n", memtest->history_start->timestamp, memtest->pid, memtest->history_start->memory, memtest->active);
+            //             memtest->history_start = memtest->history_start->next;
+            //         }
+            //         memtest = memtest->next;
+            //     }
 
-                memtest = add_memory_start;
-            }
+            //     memtest = add_memory_start;
+            // }
             printf("Thread ID: %d - No requests\n", thread_id);
             pthread_cond_wait(&got_request, &request_mutex);
         }
