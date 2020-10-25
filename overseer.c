@@ -25,8 +25,14 @@
 int sockfd;
 int new_fd;
 
+// Holds the buffered messages of new connections received whilst stdout/err are being
+// redirected to a log/outfile.
 char *connectionMsgBuffer[NUM_OF_BUFFERED_REQUESTS];
+
+// Points to the index of a message that is stored in the buffer
 int msgBufferPointer = 0;
+
+// Amount of messages stored in the buffer
 int msgBufferCounter = 0;
 
 // Setting up thread pool
@@ -86,19 +92,19 @@ struct pidHistory
 struct pidMemoryInfo *add_memory_start = NULL;
 struct pidMemoryInfo *add_memory_last = NULL;
 
+// Sends the entire memory history of a PID to the controller
 void send_pid_memory_info(int fd, char **pid)
 {
     pthread_mutex_trylock(&memory_mutex);
     memory_mutex_activated = true;
-    struct pidMemoryInfo *memtest = add_memory_start;
+    struct pidMemoryInfo *temp = add_memory_start;
 
     sleep(0.3);
-    if (memtest != NULL)
+    if (temp != NULL)
     {
-        uint16_t pidCountBuffer = htons(memtest->historyCounter);
-        printf("History counter: %d\n", memtest->historyCounter);
+        uint16_t pidCountBuffer = htons(temp->historyCounter);
         send(fd, &pidCountBuffer, sizeof(uint16_t), 0);
-        while (memtest != NULL)
+        while (temp != NULL)
         {
             // Below is suited for getting info from specific pid since we need to know all the history
             //struct pidHistory *history = add_memory_start->history_start;
@@ -109,15 +115,15 @@ void send_pid_memory_info(int fd, char **pid)
 
             // Logging to linked list
 
-            while (memtest->history_start != NULL && pidArg)
+            while (temp->history_start != NULL && pidArg)
             {
-                strcpy(sendTime, memtest->history_start->timestamp);
-                sendMemory = memtest->history_start->memory;
+                strcpy(sendTime, temp->history_start->timestamp);
+                sendMemory = temp->history_start->memory;
                 snprintf(memoryInfo, sizeof(memoryInfo), "%s %d\n", sendTime, sendMemory);
                 send(fd, &memoryInfo, MAX_BUFFER_SIZE, 0);
-                memtest->history_start = memtest->history_start->next;
+                temp->history_start = temp->history_start->next;
             }
-            memtest = memtest->next;
+            temp = temp->next;
         }
     }
 
@@ -126,25 +132,25 @@ void send_pid_memory_info(int fd, char **pid)
     memory_mutex_activated = false;
 }
 
+// Send all memory information to the controller for PIDs that are currently active
 void send_memory_info(int fd)
 {
     pthread_mutex_trylock(&memory_mutex);
     memory_mutex_activated = true;
-    struct pidMemoryInfo *memtest = add_memory_start;
+    struct pidMemoryInfo *temp = add_memory_start;
 
     sleep(0.3);
     uint16_t pidCountBuffer = htons(pidCount);
-    printf("History counter: %d\n", pidCount);
     send(fd, &pidCountBuffer, sizeof(uint16_t), 0);
-    while (memtest != NULL)
+    while (temp != NULL)
     {
-        if (memtest->active == true)
+        if (temp->active == true)
         {
             char memoryInfo[MAX_BUFFER_SIZE];
-            snprintf(memoryInfo, sizeof(memoryInfo), "%d %d %s %s\n", memtest->pid, memtest->history_end->memory, memtest->program, memtest->args);
+            snprintf(memoryInfo, sizeof(memoryInfo), "%d %d %s %s\n", temp->pid, temp->history_end->memory, temp->program, temp->args);
             send(fd, &memoryInfo, MAX_BUFFER_SIZE, 0);
         }
-        memtest = memtest->next;
+        temp = temp->next;
     }
 
     pthread_mutex_unlock(&memory_mutex);
@@ -173,11 +179,11 @@ void mem_kill(char **amount)
                 unsigned long ram = sys_info.totalram;
                 double memory_percent = ((double)process_mem / (double)ram * 100);
 
-                if ((double)percentage <= memory_percent)
+                if ((double)percentage <= memory_percent + 10)
                 {
                     kill(temp->pid, SIGKILL);
                     char *timePointer = timestamp();
-                    printf("%s - Sent SIGKILL to pid: %d for using up %d percent of total memory\n", timePointer, temp->pid, (int)memory_percent);
+                    fprintf(stdout, "%s - Sent SIGKILL to pid: %d for using up %d percent of total memory\n", timePointer, temp->pid, (int)memory_percent);
                     free(timePointer);
                     break;
                 }
@@ -188,7 +194,6 @@ void mem_kill(char **amount)
         temp = temp->next;
     }
     free(temp);
-    free(amount);
 }
 
 // If a request is performing redirection to an out/log file, once it has finished,
@@ -197,21 +202,22 @@ void mem_kill(char **amount)
 // messages to stdout and unlock the mutex.
 void connection_msg_buffer_check()
 {
-    if (msgBufferPointer > 0)
+    if (msgBufferCounter > 0)
     {
-        msgBufferCounter = 0;
-        while (msgBufferPointer > 0)
+        msgBufferPointer = 0;
+        while (msgBufferCounter > 0)
         {
-            fprintf(stdout, "%s", connectionMsgBuffer[msgBufferCounter]);
-            free(connectionMsgBuffer[msgBufferCounter]);
-            msgBufferCounter++;
-            msgBufferPointer--;
+            fprintf(stdout, "%s", connectionMsgBuffer[msgBufferPointer]);
+            free(connectionMsgBuffer[msgBufferPointer]);
+            msgBufferPointer++;
+            msgBufferCounter--;
         }
-        if (msgBufferPointer == 0)
+        if (msgBufferCounter == 0)
         {
-            msgBufferCounter = 0;
+            msgBufferPointer = 0;
         }
     }
+
     pthread_mutex_unlock(&file_mutex);
     pthread_cond_signal(&got_file);
     file_mutex_activated = false;
@@ -326,6 +332,8 @@ void manage_memory_info(int pid, int memory, char *program, int numOfArgs, char 
     pthread_cond_signal(&got_memory);
 }
 
+// When a connection is received by the overseer, add_request will
+// add a job request for one of the threads to handle
 void add_request(int request_num,
                  int fd,
                  char *program,
@@ -373,6 +381,8 @@ void add_request(int request_num,
     pthread_cond_signal(p_cond_var);
 }
 
+// get_request returns an available job request if num_requests
+// is not 0 to an available thread
 struct request *get_request()
 {
     struct request *a_request;
@@ -396,6 +406,9 @@ struct request *get_request()
     return a_request;
 }
 
+// exit_handler closes the open socket, tells the threads to
+// immediately stop what they're doing and cancel then join,
+// and any malloc'd areas of memory are cleaned up
 void exit_handler(int SIG)
 {
     // Close socket connection
@@ -404,18 +417,11 @@ void exit_handler(int SIG)
     for (int i = 0; i < 5; i++)
     {
         pthread_cancel(p_threads[i]);
-        //pthread_cond_signal(&got_request);
         pthread_mutex_unlock(&request_mutex);
-        printf("Destroying thread: %d\n", i);
         pthread_join(p_threads[i], NULL);
     }
 
-    printf("Destroyed threads.\n");
-
-    sleep(2);
-
     char *timePointer = NULL;
-    // Killing all child processes and allocated memory
 
     while (add_memory_start != NULL)
     {
@@ -425,25 +431,21 @@ void exit_handler(int SIG)
             kill(add_memory_start->pid, SIGKILL);
             time_t t = time(&t);
             timePointer = timestamp();
-            printf("%s - SIGKILL sent to pid %d\n", timePointer, add_memory_start->pid);
+            fprintf(stdout, "%s - SIGKILL sent to pid %d\n", timePointer, add_memory_start->pid);
             free(timePointer);
         }
-        //free(add_memory_start->timestamp);
         add_memory_start = add_memory_start->next;
         free(temp);
     }
 
     timePointer = timestamp();
-    printf("%s - Exiting overseer due to: CTRL^C\n", timePointer);
+    fprintf(stdout, "%s - Exiting overseer due to: CTRL^C\n", timePointer);
     free(timePointer);
     exit(0);
 }
 
 int handle_request(struct request *a_request, int thread_id)
 {
-    //mem_kill(5);
-    // Debug
-    printf("Thread %d handled request %d\n", thread_id, a_request->number);
     // retVal will contain the return value '-1' if execlp couldn't execute the program
     int retVal = 0;
     int status;
@@ -459,9 +461,6 @@ int handle_request(struct request *a_request, int thread_id)
     char logBuffer[MAX_BUFFER_SIZE];
     if (strcmp(a_request->program, "mem") == 0)
     {
-        printf("got mem\n");
-
-        //send(a_request->fd, "test123boi", MAX_BUFFER_SIZE, 0);
         while (memory_mutex_activated)
         {
             pthread_cond_wait(&got_memory, &memory_mutex);
@@ -481,7 +480,6 @@ int handle_request(struct request *a_request, int thread_id)
     }
     else if (strcmp(a_request->program, "memkill") == 0)
     {
-        printf("Memkill\n");
         mem_kill(a_request->args);
         // Let the Overseer know that the job has finished
         close(a_request->fd);
@@ -489,272 +487,243 @@ int handle_request(struct request *a_request, int thread_id)
     }
     else
     {
-        printf("Didn't match...\n");
-    }
-
-    // char *ptr = strtok(a_request->)
-
-    if (a_request->logfile != NULL)
-    {
-        snprintf(logBuffer, sizeof(logBuffer), "%s", a_request->logfile[1]);
-    }
-    char outBuffer[MAX_BUFFER_SIZE];
-    if (a_request->outfile != NULL)
-    {
-        snprintf(outBuffer, sizeof(outBuffer), "%s", a_request->outfile[1]);
-    }
-    // Debug memory
-    // printf("%p\n", &a_request->logfile);
-    // printf("request number: %d\n", a_request->number);
-
-    while (file_mutex_activated)
-    {
-        printf("Thread %d waiting...\n", thread_id);
-        pthread_cond_wait(&got_file, &file_mutex);
-        printf("Thread %d finished waiting\n", thread_id);
-    }
-
-    if (a_request->logfile != NULL)
-    {
-        file_mutex_activated = true;
-        pthread_mutex_trylock(&file_mutex);
-        //int test = pthread_mutex_trylock(&file_mutex);
-        //printf("%d\n", test);
-        printf("Thread %d locked\n", thread_id);
-        sleep(10);
-        //printf("%p\n", a_request->logfile);
-        // Duplicate stdout fd to be used for restoring stdout to the screen
-        stdoutFd = dup(STDOUT_FILENO);
-
-        //debug
-        // printf("Thread id: %d\n", thread_id);
-        // printf("Buffer name: %s\n", logBuffer);
-        // printf("Log file name below:\n");
-        // printf("%s\n", a_request->logfile[1]);
-        // printf("request number: %d\n", a_request->number);
-
-        // Open the logfile with write only and append flags
-        logFile = open(logBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
-        if (logFile < 0)
+        if (a_request->logfile != NULL)
         {
-            printf("%s\n", a_request->logfile[1]);
-            perror("Cannot open log file.");
-            exit(1);
+            snprintf(logBuffer, sizeof(logBuffer), "%s", a_request->logfile[1]);
+        }
+        char outBuffer[MAX_BUFFER_SIZE];
+        if (a_request->outfile != NULL)
+        {
+            snprintf(outBuffer, sizeof(outBuffer), "%s", a_request->outfile[1]);
         }
 
-        // Redirect stdout to write or append to the logfile provided by the user
-        logFileFd = dup2(logFile, STDOUT_FILENO);
-
-        if (logFileFd < 0)
+        while (file_mutex_activated)
         {
-            perror("Cannot duplicate file descriptor.");
-            exit(1);
+            pthread_cond_wait(&got_file, &file_mutex);
         }
-    }
 
-    time = timestamp();
-    fprintf(stdout, "%s - Attempting to execute '%s'...\n", time, a_request->program);
-    free(time);
-    if (a_request->logfile != NULL)
-    {
-        // Close the log file fd and return stdout to the screen
-        close(logFile);
-        close(logFileFd);
-        dup2(stdoutFd, STDOUT_FILENO);
-        close(stdoutFd);
-        connection_msg_buffer_check();
-    }
-
-    // Create a fork before calling execlp so we don't replace the overseer with the program the client wishes to run!
-    pid_t pid = fork();
-    // Fork was successfully executed!
-    if (pid >= 0)
-    {
-        // Fork returns 0 for the child process
-        if (pid == 0)
+        if (a_request->logfile != NULL)
         {
-            while (file_mutex_activated)
+            file_mutex_activated = true;
+            pthread_mutex_trylock(&file_mutex);
+            // Duplicate stdout fd to be used for restoring stdout to the screen
+            stdoutFd = dup(STDOUT_FILENO);
+
+            // Open the logfile with write only and append flags
+            logFile = open(logBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
+            if (logFile < 0)
             {
-                // printf("Thread %d waiting...\n", thread_id);
-                pthread_cond_wait(&got_file, &file_mutex);
-                // printf("Thread %d finished waiting\n", thread_id);
+                perror("Cannot open log file.");
+                exit(1);
             }
-            if (a_request->outfile != NULL)
+
+            // Redirect stdout to write or append to the logfile provided by the user
+            logFileFd = dup2(logFile, STDOUT_FILENO);
+
+            if (logFileFd < 0)
             {
-                file_mutex_activated = true;
-                pthread_mutex_trylock(&file_mutex);
-
-                // printf("Thread %d locked\n", thread_id);
-                sleep(2);
-
-                stdoutFd = dup(STDOUT_FILENO);
-                stderrFd = dup(STDERR_FILENO);
-                // Open the outfile with write only and append flags
-                outFile = open(outBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
-                if (outFile < 0)
-                {
-                    printf("%s\n", a_request->outfile[1]);
-                    perror("Cannot open out file.");
-                    exit(1);
-                }
-
-                // Redirect stdout to write or append to the outfile provided by the user
-                outFileFd = dup2(outFile, STDOUT_FILENO);
-                outFileFdErr = dup2(outFile, STDERR_FILENO);
-                // outFileFd = dup2(outFile, STDOUT_FILENO);
-                if (outFileFd < 0)
-                {
-                    perror("Cannot duplicate file descriptor.");
-                    exit(1);
-                }
-                if (outFileFdErr < 0)
-                {
-                    perror("Cannot duplicate file descriptor. Err");
-                    exit(1);
-                }
-            }
-            // Run the program and check if execlp will return '-1' which will let the parent know if it failed
-            // retVal = execvp(a_request->program, a_request->args);
-            retVal = execvp(a_request->program, a_request->args);
-
-            // Close the Out file fd and return stdout to the screen
-            if (a_request->outfile != NULL)
-            {
-                close(outFile);
-                close(outFileFd);
-                close(outFileFdErr);
-                dup2(stdoutFd, STDOUT_FILENO);
-                dup2(stderrFd, STDERR_FILENO);
-                close(stdoutFd);
-                close(stderrFd);
-                connection_msg_buffer_check();
+                perror("Cannot duplicate file descriptor.");
+                exit(1);
             }
         }
-        else
-        {
-            char memoryRead[MAX_BUFFER_SIZE];
-            snprintf(memoryRead, sizeof(memoryRead), "/proc/%d/maps", pid);
 
-            // While the process is running, update it's memory every 1 second!!!
-            while (waitpid(pid, &status, WNOHANG) == 0)
+        time = timestamp();
+        fprintf(stdout, "%s - Attempting to execute '%s'...\n", time, a_request->program);
+        free(time);
+        if (a_request->logfile != NULL)
+        {
+            // Close the log file fd and return stdout to the screen
+            close(logFile);
+            close(logFileFd);
+            dup2(stdoutFd, STDOUT_FILENO);
+            close(stdoutFd);
+            connection_msg_buffer_check();
+        }
+
+        // Create a fork before calling execlp so we don't replace the overseer with the program the client wishes to run!
+        pid_t pid = fork();
+        // Fork was successfully executed!
+        if (pid >= 0)
+        {
+            // Fork returns 0 for the child process
+            if (pid == 0)
             {
+                while (file_mutex_activated)
+                {
+                    pthread_cond_wait(&got_file, &file_mutex);
+                }
+                if (a_request->outfile != NULL)
+                {
+                    file_mutex_activated = true;
+                    pthread_mutex_trylock(&file_mutex);
+
+                    sleep(2);
+
+                    stdoutFd = dup(STDOUT_FILENO);
+                    stderrFd = dup(STDERR_FILENO);
+                    // Open the outfile with write only and append flags
+                    outFile = open(outBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
+                    if (outFile < 0)
+                    {
+                        perror("Cannot open out file.");
+                        exit(1);
+                    }
+
+                    // Redirect stdout to write or append to the outfile provided by the user
+                    outFileFd = dup2(outFile, STDOUT_FILENO);
+                    outFileFdErr = dup2(outFile, STDERR_FILENO);
+                    // outFileFd = dup2(outFile, STDOUT_FILENO);
+                    if (outFileFd < 0)
+                    {
+                        perror("Cannot duplicate file descriptor.");
+                        exit(1);
+                    }
+                    if (outFileFdErr < 0)
+                    {
+                        perror("Cannot duplicate file descriptor. Err");
+                        exit(1);
+                    }
+                }
+                // Run the program and check if execlp will return '-1' which will let the parent know if it failed
+                // retVal = execvp(a_request->program, a_request->args);
+                retVal = execvp(a_request->program, a_request->args);
+
+                // Close the Out file fd and return stdout to the screen
+                if (a_request->outfile != NULL)
+                {
+                    close(outFile);
+                    close(outFileFd);
+                    close(outFileFdErr);
+                    dup2(stdoutFd, STDOUT_FILENO);
+                    dup2(stderrFd, STDERR_FILENO);
+                    close(stdoutFd);
+                    close(stderrFd);
+                    connection_msg_buffer_check();
+                }
+            }
+            else
+            {
+                char memoryRead[MAX_BUFFER_SIZE];
+                snprintf(memoryRead, sizeof(memoryRead), "/proc/%d/maps", pid);
+
+                int count = 0, term;
+                int timeout = TERMINATE_TIMEOUT;
+                // While the process is running, update it's memory every 1 second!!!
+                while (waitpid(pid, &status, WNOHANG) == 0)
+                {
+                    while (memory_mutex_activated)
+                    {
+                        pthread_cond_wait(&got_memory, &memory_mutex);
+                    }
+                    memory_mutex_activated = true;
+                    sleep(0.2);
+                    manage_memory_info(pid, getProcMemoryInfo(pid, memoryRead), a_request->program, a_request->numOfArgs, a_request->args);
+                    memory_mutex_activated = false;
+
+                    if (count >= timeout)
+                    {
+                        if (count == timeout) // Once we reach the threshold
+                        {
+                            // Ask nicely to close the program
+                            term = kill(pid, SIGTERM);
+                            fprintf(stdout, "%s - sent SIGTERM to %d\n", timestamp(), pid);
+                        }
+                        switch (term)
+                        {
+                        case 0: // Program terminated successfully.
+                            time = timestamp();
+                            fprintf(stdout, "%s - %d has been terminated with status code %d\n", time, pid, WEXITSTATUS(SIGTERM));
+                            free(time);
+                            break;
+                        case -1: // If for some reason we cannot terminate the program by asking nicely.
+                            sleep(5);
+                            time = timestamp();
+                            fprintf(stdout, "%s - sent SIGKILL to %d\n", time, pid);
+                            free(time);
+                            term = kill(pid, SIGKILL);
+                            break;
+                        // Error handling
+                        case EPERM:
+                            perror("Not root or super-user. (Please run under sudo).\n");
+                            break;
+                        case EINVAL:
+                            fprintf(stdout, "Sig <%d>\n", SIGTERM); // Doubt we will ever encounter this error.
+                            perror("Invalid SIG value when attempting to terminate.\n");
+                            break;
+                        case ESRCH:
+                            fprintf(stdout, "Pid <%d>\n", getpid());
+                            perror("Could not find PID of child process.\n");
+                            break;
+                        }
+                    }
+                    count++;
+                    sleep(1);
+                }
+                pid_t ws = waitpid(pid, &status, WNOHANG); // Current status of child (0 is running)
+
+                // Let it be known that the process has finished running
                 while (memory_mutex_activated)
                 {
                     pthread_cond_wait(&got_memory, &memory_mutex);
                 }
                 memory_mutex_activated = true;
-                sleep(0.2);
-                manage_memory_info(pid, getProcMemoryInfo(pid, memoryRead), a_request->program, a_request->numOfArgs, a_request->args);
+                manage_memory_info(pid, -1, a_request->program, a_request->numOfArgs, a_request->args);
                 memory_mutex_activated = false;
-                sleep(1);
-            }
-            pid_t ws = waitpid(pid, &status, WNOHANG); // Current status of child (0 is running)
 
-            // Let it be known that the process has finished running
-            while (memory_mutex_activated)
-            {
-                pthread_cond_wait(&got_memory, &memory_mutex);
-            }
-            memory_mutex_activated = true;
-            manage_memory_info(pid, -1, a_request->program, a_request->numOfArgs, a_request->args);
-            memory_mutex_activated = false;
-
-            while (file_mutex_activated)
-            {
-                // printf("Thread %d waiting...\n", thread_id);
-                pthread_cond_wait(&got_file, &file_mutex);
-                // printf("Thread %d finished waiting\n", thread_id);
-            }
-
-            if (a_request->logfile != NULL)
-            {
-                file_mutex_activated = true;
-                pthread_mutex_trylock(&file_mutex);
-                // int test = pthread_mutex_trylock(&file_mutex);
-                // printf("%d\n", test);
-                // printf("Thread %d locked\n", thread_id);
-                sleep(2);
-                //printf("%p\n", a_request->logfile);
-                // Duplicate stdout fd to be used for restoring stdout to the screen
-                stdoutFd = dup(STDOUT_FILENO);
-
-                //debug
-                // printf("Thread id: %d\n", thread_id);
-                // printf("Log file name below:\n");
-                // printf("%s\n", a_request->logfile[1]);
-                // printf("request number: %d\n", a_request->number);
-
-                // Open the logfile with write only and append flags
-                logFile = open(logBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
-                if (logFile < 0)
+                while (file_mutex_activated)
                 {
-                    printf("%s\n", a_request->logfile[1]);
-                    perror("Cannot open log file.");
-                    exit(1);
+                    pthread_cond_wait(&got_file, &file_mutex);
                 }
 
-                // Redirect stdout to write or append to the logfile provided by the user
-                logFileFd = dup2(logFile, STDOUT_FILENO);
-
-                if (logFileFd < 0)
+                if (a_request->logfile != NULL)
                 {
-                    perror("Cannot duplicate file descriptor.");
-                    exit(1);
-                }
-            }
+                    file_mutex_activated = true;
+                    pthread_mutex_trylock(&file_mutex);
+                    // Duplicate stdout fd to be used for restoring stdout to the screen
+                    stdoutFd = dup(STDOUT_FILENO);
 
-            int count = 0, term;
-            int timeout = TERMINATE_TIMEOUT; // Need to update once part B is done
-            // PART D
-            while (!(ws = waitpid(pid, &status, WNOHANG)))
-            {
-                if (count >= timeout)
-                {
-                    if (count == timeout) // Once we reach the threshold
+                    // Open the logfile with write only and append flags
+                    logFile = open(logBuffer, O_WRONLY | O_APPEND | O_CREAT, 0777);
+                    if (logFile < 0)
                     {
-                        // Ask nicely to close the program
-                        term = kill(pid, SIGTERM);
-                        printf("%s - sent SIGTERM to %d\n", timestamp(), pid);
+                        perror("Cannot open log file.");
+                        exit(1);
                     }
-                    switch (term)
+
+                    // Redirect stdout to write or append to the logfile provided by the user
+                    logFileFd = dup2(logFile, STDOUT_FILENO);
+
+                    if (logFileFd < 0)
                     {
-                    case 0: // Program terminated successfully.
-                        time = timestamp();
-                        printf("%s - %d has been terminated with status code %d\n", time, pid, WEXITSTATUS(SIGTERM));
-                        free(time);
-                        break;
-                    case -1: // If for some reason we cannot terminate the program by asking nicely.
-                        sleep(5);
-                        time = timestamp();
-                        printf("%s - sent SIGKILL to %d\n", time, pid);
-                        free(time);
-                        term = kill(pid, SIGKILL);
-                        break;
-                    // Error handling
-                    case EPERM:
-                        perror("Not root or super-user. (Please run under sudo).\n");
-                        break;
-                    case EINVAL:
-                        printf("Sig <%d>\n", SIGTERM); // Doubt we will ever encounter this error.
-                        perror("Invalid SIG value when attempting to terminate.\n");
-                        break;
-                    case ESRCH:
-                        printf("Pid <%d>\n", getpid());
-                        perror("Could not find PID of child process.\n");
-                        break;
+                        perror("Cannot duplicate file descriptor.");
+                        exit(1);
                     }
                 }
-                count++;
-                sleep(1);
-            }
 
-            // Logging
-
-            // Need to check signal to check WTERMSIG (best practice)
-            if (!WIFEXITED(status) && WIFSIGNALED(status))
-            {
-                // Making sure we somehow didn't mess up.
-                if (WTERMSIG(status) != SIGTERM && WTERMSIG(status) != SIGKILL)
+                // Need to check signal to check WTERMSIG (best practice)
+                if (!WIFEXITED(status) && WIFSIGNALED(status))
+                {
+                    // Making sure we somehow didn't mess up.
+                    if (WTERMSIG(status) != SIGTERM && WTERMSIG(status) != SIGKILL)
+                    {
+                        if (retVal == -1)
+                        {
+                            time = timestamp();
+                            fprintf(stdout, "%s - Could not execute '%s'\n", time, a_request->program);
+                            free(time);
+                        }
+                        else
+                        {
+                            time = timestamp();
+                            fprintf(stdout, "%s - '%s' has been executed with PID %d\n", time, a_request->program, pid);
+                            fprintf(stdout, "%s - PID %d has terminated with status code %d\n", time, pid, WEXITSTATUS(status));
+                            free(time);
+                        }
+                    }
+                }
+                // WIFEXITED returns true for exit(<1)
+                // (programmed executed sucessfully)
+                else
                 {
                     if (retVal == -1)
                     {
@@ -771,63 +740,45 @@ int handle_request(struct request *a_request, int thread_id)
                     }
                 }
             }
-            // WIFEXITED returns true for exit(<1)
-            // (programmed executed sucessfully)
-            else
-            {
-                if (retVal == -1)
-                {
-                    time = timestamp();
-                    fprintf(stdout, "%s - Could not execute '%s'\n", time, a_request->program);
-                    free(time);
-                }
-                else
-                {
-                    time = timestamp();
-                    fprintf(stdout, "%s - '%s' has been executed with PID %d\n", time, a_request->program, pid);
-                    fprintf(stdout, "%s - PID %d has terminated with status code %d\n", time, pid, WEXITSTATUS(status));
-                    free(time);
-                }
-            }
+        }
+        // If a fork could not be created, log to stderr
+        else
+        {
+            fprintf(stderr, "Could not create a fork.\n");
+        }
+
+        // Close the log file fd and return stdout to the screen
+        if (a_request->logfile != NULL)
+        {
+            // Close the log file fd and return stdout to the screen
+            close(logFileFd);
+            dup2(stdoutFd, STDOUT_FILENO);
+            close(stdoutFd);
+            connection_msg_buffer_check();
         }
     }
-    // If a fork could not be created, log to stderr
-    else
-    {
-        fprintf(stderr, "Could not create a fork.\n");
-    }
-
-    // Close the log file fd and return stdout to the screen
-    if (a_request->logfile != NULL)
-    {
-        // Close the log file fd and return stdout to the screen
-        close(logFileFd);
-        dup2(stdoutFd, STDOUT_FILENO);
-        close(stdoutFd);
-        printf("Thread %d unlocked\n", thread_id);
-        connection_msg_buffer_check();
-    }
-
     // Let the Overseer know that the job has finished
     close(a_request->fd);
     return 1;
 }
 
+// handle_requests_loop is the main area of the thread pool. When a
+// thread is created, it will endlessly run waiting on any new
+// job requests that have came in, otherwise the threads will
+// be on standby.
 void *handle_requests_loop(void *data)
 {
-    // When overseer is killed, need to ensure that all threads will cancel and join once they are finished their job
+    // When the CTRL+C signal carried out, need to ensure that all threads will cancel and join once they are finished their job
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
     struct request *a_request;
     int thread_id = *((int *)data);
-    // Debug info
-    printf("Thread ID: %d running...\n", thread_id);
+
     pthread_mutex_lock(&request_mutex);
 
     while (1)
     {
         if (num_requests > 0)
         {
-            // Debug info
             a_request = get_request();
             if (a_request)
             {
@@ -841,7 +792,6 @@ void *handle_requests_loop(void *data)
         }
         else
         {
-            printf("Thread ID: %d - No requests\n", thread_id);
             pthread_cond_wait(&got_request, &request_mutex);
         }
     }
@@ -849,7 +799,7 @@ void *handle_requests_loop(void *data)
 
 int main(int argc, char *argv[])
 {
-    signal(SIGINT, exit_handler); // PART D (Do not remove)
+    signal(SIGINT, exit_handler);
     // Setting up distributed system server
     if (argc != 2)
     {
@@ -900,9 +850,6 @@ int main(int argc, char *argv[])
 
     struct sockaddr_in their_addr;
     socklen_t sin_size;
-
-    printf("Server successfully setup\n");
-    printf("Now listening for requests...\n\n");
 
     pthread_mutex_init(&request_mutex, NULL);
     pthread_cond_init(&got_request, NULL);
@@ -966,13 +913,6 @@ int main(int argc, char *argv[])
             }
             programBuffer[MAX_BUFFER_SIZE] = '\0';
 
-            printf("%s\n", programBuffer);
-
-            if (strcmp(programBuffer, "memkill") == 0)
-            {
-                printf("\nGot memkill\n");
-            }
-
             if (strcmp(programBuffer, "mem") == 0)
             {
                 uint16_t test;
@@ -994,10 +934,10 @@ int main(int argc, char *argv[])
                     char **args = NULL;
                     char argsBuffer[MAX_BUFFER_SIZE];
                     if (recv(new_fd, &argsBuffer, MAX_BUFFER_SIZE, 0) == -1)
-                {
-                    perror("recv");
-                    exit(1);
-                }
+                    {
+                        perror("recv");
+                        exit(1);
+                    }
                     argsBuffer[MAX_BUFFER_SIZE] = '\0';
                     //args[0] = malloc(sizeof(argsBuffer) * sizeof(char));
                     char *p = strtok(argsBuffer, " ");
@@ -1107,9 +1047,6 @@ int main(int argc, char *argv[])
                     logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
                     logfileArg[indexLog] = 0;
                 }
-
-                // Debug memory
-                //printf("%p\n", &logfileArg);
 
                 add_request(request_counter, new_fd, programBuffer, spaces, args, outfileArg, logfileArg, &request_mutex, &got_request);
                 request_counter++;

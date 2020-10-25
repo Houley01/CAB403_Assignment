@@ -4,10 +4,10 @@ Fill the below for each section with C for complete and P for partially complete
 For example: A[C]
 
 A [C]
-B [P]
+B [C]
 C [C]
-D [P]
-E [P] 
+D [C]
+E [C] 
 
 Comments:
 
@@ -24,13 +24,13 @@ ID: n10395792
 name: Joel Wilkinson
 contribution: Part A, C, E, Mutex handling
 
-ID:
+ID: n10407642
 name: Brendan Freeman
-contribution: Part D
+contribution: Part D, E (memkill), makefile, code improvements
 
-ID:
+ID: n10353950
 name: Ethan Houley
-contribution: Part B
+contribution: Part B, makefile, code improvements/validation
 
 Comments:
 

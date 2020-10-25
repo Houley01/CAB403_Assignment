@@ -10,5 +10,6 @@ int main(int argc, char *argv[])
         printf("%s\n", argv[i]);
     }
     printf("-----------------\n");
+    sleep(3);
     exit(5); // Exit status code
 }

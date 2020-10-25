@@ -11,7 +11,6 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-// #define PORT_NO 54321 /* PORT Number */
 #define MAX_BUFFER_SIZE 4096
 #define HELP_TEXT "\
 Usage: controller <address> <port> {[-o out_file] \
@@ -30,8 +29,7 @@ int main(int argc, char *argv[])
     int sockfd;
     bool argument_safe = true;
     int PORT_NO;
-    // int OUTPUT_ARG_NUM = 0;
-    // int LOG_ARG_NUM = 0;
+
     int program_arg = MINIMUM_ARGS;
     struct hostent *he;
     struct sockaddr_in their_addr; /* connector's address information */
@@ -40,7 +38,7 @@ int main(int argc, char *argv[])
     {
         if (strcmp(argv[1], "--help") == 0)
         {
-            printf(HELP_TEXT);
+            fprintf(stdout, HELP_TEXT);
             exit(1);
         }
     }
@@ -87,11 +85,6 @@ int main(int argc, char *argv[])
     char argsLogFile[MAX_BUFFER_SIZE];
     memset(&argsLogFile, 0, sizeof(argsLogFile));
 
-    // char argsTimeFile[MAX_BUFFER_SIZE];
-    // memset(&argsTimeFile, 0, sizeof(argsTimeFile));
-    // Loop through the arguments to find optional Arguments
-    // This include '-o' '-log' '-t' 'mem' 'memkill' Arguments
-
     int log_arg_location = __INT_MAX__, out_arg_location = __INT_MAX__;
     for (int i = 2; i < argc; i++)
     {
@@ -117,13 +110,6 @@ int main(int argc, char *argv[])
                 program_arg = i + 2;
             }
         }
-        // else if (strcmp("-t", argv[i]) == 0)
-        // {
-        //     strcat(argsTimeFile, argv[i]);
-        //     strcat(argsTimeFile, " ");
-        //     strcat(argsTimeFile, argv[i + 1]);
-        //     strcat(argsTimeFile, " ");
-        // }
     }
 
     // If Outfile arg location is != MAX INT
@@ -147,14 +133,8 @@ int main(int argc, char *argv[])
     for (int i = program_arg + 1; i < argc; i++)
     {
         strncat(args, argv[i], sizeof(argv[i]));
-        printf("%d:%s\n", i, argv[i]);
-        printf("---------------\n");
         strncat(args, " ", argc); // Doesn't actually matter what int value we put here (1 causes a warning though)=
     }
-
-    // Open file stream test and passing it to Overseer (this is how we can write to a log file)
-    // FILE *fp;
-    // fp = fopen("test123.txt", "w+");
 
     /* clear address struct */
     memset(&their_addr, 0, sizeof(their_addr));
@@ -176,14 +156,6 @@ int main(int argc, char *argv[])
         fprintf(stdout, "Made successful connection to Overseer %s:%d\n", inet_ntoa(their_addr.sin_addr), ntohs(their_addr.sin_port));
 
         // Send the program and args separately. For consistency!
-
-        //uint16_t programSize = htons(sizeof(program));
-        // send(sockfd, &programSize, sizeof(program), 0);
-        // fflush(stdout);
-        // if (optionalArgs[0] != NULL || optionalArgs[3] != NULL || optionalArgs[3] != NULL){
-
-        // send(sockfd, argsTimeFile, MAX_BUFFER_SIZE, 0);
-        // fflush(stdout);
 
         if (strcmp(program, "mem") == 0)
         {
@@ -215,19 +187,16 @@ int main(int argc, char *argv[])
             }
             int numOfHistoryItems = ntohs(buffer);
 
-            //printf("%s\n", test);
-            printf("Expecting %d memory history items\n", numOfHistoryItems);
-
             while (numOfHistoryItems > 0)
             {
-                char buffybuffbuff[MAX_BUFFER_SIZE];
+                char memhistory[MAX_BUFFER_SIZE];
                 sleep(0.3);
-                if (recv(sockfd, &buffybuffbuff, MAX_BUFFER_SIZE, 0) == -1)
+                if (recv(sockfd, &memhistory, MAX_BUFFER_SIZE, 0) == -1)
                 {
                     perror("recv");
                     exit(1);
                 }
-                printf("%s", buffybuffbuff);
+                fprintf(stdout, "%s", memhistory);
                 numOfHistoryItems--;
             }
         }
@@ -247,7 +216,7 @@ int main(int argc, char *argv[])
             send(sockfd, argsLogFile, MAX_BUFFER_SIZE, 0);
             fflush(stdout);
 
-            // Sleep so the Overseer gets a chance to recive the icoming string.
+            // Sleep so the Overseer gets a chance to recive the incoming string.
             sleep(1);
         }
     }

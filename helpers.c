@@ -6,13 +6,14 @@
 #define MAX_LINE_SIZE 256
 #define MAX_ADDRESS_SIZE 13
 #define MAX_FILE_LENGTH 64
+#define TIMESTAMP_LENGTH 20
 
 char *timestamp()
 {
     time_t t = time(&t);
-    char *str = (char *)malloc(20 * sizeof(char)); // Not mallocing here results in a segmentation fault
-    // sprintf is similar to formating a printf internally and then assigning that to our buffer
+    char *str = (char *)malloc(TIMESTAMP_LENGTH * sizeof(char));
     sprintf(str, "%d-%02d-%02d %02d:%02d:%02d", localtime(&t)->tm_year + 1900, localtime(&t)->tm_mon + 1, localtime(&t)->tm_mday, localtime(&t)->tm_hour, localtime(&t)->tm_min, localtime(&t)->tm_sec);
+    str[20] = '\0';
     return str;
 }
 
@@ -76,13 +77,7 @@ int getProcMemoryInfo(int pid, char map[MAX_FILE_LENGTH])
 
                     // We have finally gotten the memory difference!
                     long memoryUsed = (addressOneLong - addressTwoLong);
-                    // Kilobytes
-                    //long memoryUsed = (addressOneLong - addressTwoLong) / 1000;
                     memoryTotal += memoryUsed;
-
-                    // printf("Address One: %ld (hex)\n", addressOneLong);
-                    // printf("Address Two: %ld (hex)\n", addressTwoLong);
-                    // printf("Equals: %ldK\n\n", memoryUsed);
                 }
                 // Reset counter for new line
                 spaces = 0;
@@ -91,8 +86,6 @@ int getProcMemoryInfo(int pid, char map[MAX_FILE_LENGTH])
             }
         }
     }
-    // Kilobytes
-    //printf("This process is using %dK total memory\n", memoryTotal);
     fclose(fp);
 
     return memoryTotal;
