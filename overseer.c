@@ -1011,7 +1011,6 @@ int main(int argc, char *argv[])
             
             if (strcmp(programBuffer, "mem") == 0)
             {
-                printf("\nGot mem\n");
                 uint16_t test;
 
                 if (recv(new_fd, &test, sizeof(uint16_t), 0) == -1)
