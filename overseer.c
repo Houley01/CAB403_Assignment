@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/sysinfo.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -17,10 +18,19 @@
 #define NUM_HANDLER_THREADS 5
 #define NUM_OF_REQUESTS 10
 #define MAX_BUFFER_SIZE 4096
-
+#define NUM_OF_BUFFERED_REQUESTS 30
 #define TERMINATE_TIMEOUT 10
+#define CONNECT_MSG_BUFFER_SIZE 60
 
 int sockfd;
+int new_fd;
+
+char *connectionMsgBuffer[NUM_OF_BUFFERED_REQUESTS];
+int msgBufferPointer = 0;
+int msgBufferCounter = 0;
+
+// Setting up thread pool
+pthread_t p_threads[NUM_HANDLER_THREADS];
 
 pthread_mutex_t request_mutex;
 pthread_cond_t got_request;
@@ -40,6 +50,7 @@ struct request
     int number;
     int fd;
     char *program;
+    int numOfArgs;
     char **args;
     char **outfile;
     char **logfile;
@@ -52,19 +63,199 @@ struct request *last_request = NULL;
 struct pidMemoryInfo
 {
     int pid;
+    bool active;
+    int historyCounter;
+    char *program;
+    char *args;
+    struct pidHistory *history_start;
+    struct pidHistory *history_end;
+    struct request *request;
+    struct pidMemoryInfo *next;
+};
+
+// For all memory
+uint16_t pidCount = 0;
+
+struct pidHistory
+{
     char *timestamp;
     int memory;
-    bool active;
-    struct pidMemoryInfo *next;
+    struct pidHistory *next;
 };
 
 struct pidMemoryInfo *add_memory_start = NULL;
 struct pidMemoryInfo *add_memory_last = NULL;
 
+void send_pid_memory_info(int fd, char **pid)
+{
+    pthread_mutex_trylock(&memory_mutex);
+    memory_mutex_activated = true;
+    struct pidMemoryInfo *memtest = add_memory_start;
+
+    sleep(0.3);
+    if (memtest != NULL)
+    {
+        uint16_t pidCountBuffer = htons(memtest->historyCounter);
+        printf("History counter: %d\n", memtest->historyCounter);
+        send(fd, &pidCountBuffer, sizeof(uint16_t), 0);
+        while (memtest != NULL)
+        {
+            // Below is suited for getting info from specific pid since we need to know all the history
+            //struct pidHistory *history = add_memory_start->history_start;
+            char sendTime[20];
+            int sendMemory = 0;
+            char memoryInfo[MAX_BUFFER_SIZE];
+            int pidArg = atoi(pid[0]);
+            while (memtest->history_start != NULL && pidArg)
+            {
+                strcpy(sendTime, memtest->history_start->timestamp);
+                sendMemory = memtest->history_start->memory;
+                snprintf(memoryInfo, sizeof(memoryInfo), "%s %d\n", sendTime, sendMemory);
+                send(fd, &memoryInfo, MAX_BUFFER_SIZE, 0);
+                memtest->history_start = memtest->history_start->next;
+            }
+            memtest = memtest->next;
+        }
+    }
+
+    pthread_mutex_unlock(&memory_mutex);
+    pthread_cond_signal(&got_memory);
+    memory_mutex_activated = false;
+}
+
+void send_memory_info(int fd)
+{
+    pthread_mutex_trylock(&memory_mutex);
+    memory_mutex_activated = true;
+    struct pidMemoryInfo *memtest = add_memory_start;
+
+    sleep(0.3);
+    uint16_t pidCountBuffer = htons(pidCount);
+    printf("History counter: %d\n", pidCount);
+    send(fd, &pidCountBuffer, sizeof(uint16_t), 0);
+    while (memtest != NULL)
+    {
+        // Below is suited for getting info from specific pid since we need to know all the history
+        //printf("Num of history items: %d\n", memtest->historyCounter);
+        //struct pidHistory *history = add_memory_start->history_start;
+        // char sendTime[20];
+        // int sendMemory = 0;
+        // while (memtest->history_start != NULL)
+        // {
+        //     strcpy(sendTime, memtest->history_start->timestamp);
+        //     sendMemory = memtest->history_start->memory;
+        //     memtest->history_start = memtest->history_start->next;
+        // }
+        if (memtest->active == true)
+        {
+            char memoryInfo[MAX_BUFFER_SIZE];
+            snprintf(memoryInfo, sizeof(memoryInfo), "%d %d %s %s\n", memtest->pid, memtest->history_end->memory, memtest->program, memtest->args);
+            send(fd, &memoryInfo, MAX_BUFFER_SIZE, 0);
+        }
+        memtest = memtest->next;
+    }
+
+    pthread_mutex_unlock(&memory_mutex);
+    pthread_cond_signal(&got_memory);
+    memory_mutex_activated = false;
+}
+
+void mem_kill(int amount)
+{
+    struct sysinfo sys_info;
+    if(sysinfo(&sys_info) != 0) perror("sysinfo");
+
+    struct pidMemoryInfo *temp = add_memory_start;
+    while (temp != NULL)
+    {
+        if (temp->active)
+        {
+            unsigned long process_mem = 0;
+            while(temp->history_start != NULL)
+            {
+                process_mem += temp->history_start->memory;
+                unsigned long ram = sys_info.totalram;
+                double memory_percent = (double)process_mem / (double)ram * 100;
+                // printf("Mem: %lf - Amount: %d\n", memory_percent, amount);
+                if((double)amount <= memory_percent)
+                {
+                    kill(temp->pid, SIGKILL);
+                    char *timePointer = timestamp();
+                    printf("%s - Sent SIGKILL to pid: %d for using up %d percent of total memory\n", timePointer, temp->pid, (int)memory_percent);
+                    free(timePointer);
+                    break;
+                }
+
+                temp->history_start = temp->history_start->next;
+            }
+        }
+        temp = temp->next;
+    }
+    free(temp);
+}
+
+// If a request is performing redirection to an out/log file, once it has finished,
+// it will then call this function to check if there were any connections made during
+// the mutex being locked. This function will print to stdout all of those buffered
+// messages to stdout and unlock the mutex.
+void connection_msg_buffer_check()
+{
+    if (msgBufferPointer > 0)
+    {
+        msgBufferCounter = 0;
+        while (msgBufferPointer > 0)
+        {
+            fprintf(stdout, "%s", connectionMsgBuffer[msgBufferCounter]);
+            free(connectionMsgBuffer[msgBufferCounter]);
+            msgBufferCounter++;
+            msgBufferPointer--;
+        }
+        if (msgBufferPointer == 0)
+        {
+            msgBufferCounter = 0;
+        }
+    }
+    pthread_mutex_unlock(&file_mutex);
+    pthread_cond_signal(&got_file);
+    file_mutex_activated = false;
+}
+
+// Manage history info to the history linked list of memory linked list.
+// History is the chain of information for a process timestamping what
+// it's current memory use is at the point in time.
+void manage_history_info(struct pidMemoryInfo *memoryData, int memory)
+{
+    struct pidHistory *history;
+
+    history = malloc(sizeof(struct pidHistory));
+
+    if (!history)
+    {
+        fprintf(stderr, "Adding new memory info: out of memory\n");
+        exit(1);
+    }
+
+    history->memory = memory;
+    history->timestamp = timestamp();
+
+    if (memoryData->history_start == NULL)
+    {
+        memoryData->history_start = history;
+        memoryData->history_end = history;
+        memoryData->historyCounter = 1;
+    }
+    else
+    {
+        memoryData->history_end->next = history;
+        memoryData->history_end = history;
+        memoryData->historyCounter++;
+    }
+}
+
 // Manage memory info to the memory linked list of running processes
 // Memory will either be the memory of the current running process, or -1
 // If -1, it has been indicated that the process is no longer running
-void manage_memory_info(int pid, int memory)
+void manage_memory_info(int pid, int memory, char *program, int numOfArgs, char **args)
 {
     pthread_mutex_trylock(&memory_mutex);
     struct pidMemoryInfo *read_memory = add_memory_start;
@@ -85,22 +276,23 @@ void manage_memory_info(int pid, int memory)
 
     if (pid_does_exist && read_memory != NULL)
     {
-        read_memory->timestamp = timestamp();
         if (memory != -1)
         {
-            read_memory->memory = memory;
             read_memory->active = true;
+            manage_history_info(read_memory, memory);
         }
         else
         {
             read_memory->active = false;
+            pidCount--;
         }
     }
     else
     {
         struct pidMemoryInfo *new_memory_info;
 
-        new_memory_info = (struct pidMemoryInfo *)malloc(sizeof(struct pidMemoryInfo));
+        new_memory_info = malloc(sizeof(struct pidMemoryInfo));
+
         if (!new_memory_info)
         {
             fprintf(stderr, "Adding new memory info: out of memory\n");
@@ -108,9 +300,15 @@ void manage_memory_info(int pid, int memory)
         }
 
         new_memory_info->pid = pid;
-        new_memory_info->timestamp = timestamp();
-        new_memory_info->memory = memory;
         new_memory_info->active = true;
+        new_memory_info->program = malloc(sizeof(program) * sizeof(char));
+        strcpy(new_memory_info->program, program);
+        new_memory_info->args = malloc(sizeof(args) * sizeof(char));
+        for (int i = 0; i < numOfArgs; i++)
+        {
+            strcat(new_memory_info->args, args[i]);
+            strcat(new_memory_info->args, " ");
+        }
 
         if (add_memory_start == NULL)
         {
@@ -122,6 +320,8 @@ void manage_memory_info(int pid, int memory)
             add_memory_last->next = new_memory_info;
             add_memory_last = new_memory_info;
         }
+        pidCount++;
+        manage_history_info(new_memory_info, memory);
     }
 
     pthread_mutex_unlock(&memory_mutex);
@@ -132,6 +332,7 @@ void manage_memory_info(int pid, int memory)
 void add_request(int request_num,
                  int fd,
                  char *program,
+                 int numOfArgs,
                  char **args,
                  char **outfile,
                  char **logfile,
@@ -139,6 +340,7 @@ void add_request(int request_num,
                  pthread_cond_t *p_cond_var)
 {
     struct request *a_request;
+
     a_request = (struct request *)malloc(sizeof(struct request));
     if (!a_request)
     {
@@ -148,6 +350,7 @@ void add_request(int request_num,
     a_request->fd = fd;
     a_request->number = request_num;
     a_request->program = program;
+    a_request->numOfArgs = numOfArgs;
     a_request->args = args;
     a_request->outfile = outfile;
     a_request->logfile = logfile;
@@ -198,23 +401,65 @@ struct request *get_request()
 
 void exit_handler(int SIG)
 {
-    // TODO
-    // - Kill all children process here
-    // https://stackoverflow.com/questions/10619952/how-to-completely-destroy-a-socket-connection-in-c
-    // Apperently doesn't completely destroy the socket (os cleans it up anyways)
+    // Close socket connection
     close(sockfd);
 
-    pid_t parent = getppid();
-    // kill(-parent, SIGKILL);
+    for (int i = 0; i < 5; i++)
+    {
+        pthread_cancel(p_threads[i]);
+        //pthread_cond_signal(&got_request);
+        pthread_mutex_unlock(&request_mutex);
+        printf("Destroying thread: %d\n", i);
+        pthread_join(p_threads[i], NULL);
+    }
 
+    printf("Destroyed threads.\n");
 
+    sleep(2);
 
-    printf("%s - Exiting overseer due to: CTRL^C\n", timestamp());
+    char *timePointer = NULL;
+
+    // Not too sure how to clean up the requests when the list actively moves
+    // Maybe checking all threads to see if they're running jobs + the global list is the only way
+    // struct request *requestClean = requestsCurrent;
+    // while (requestClean != NULL)
+    // {
+    //     printf("Request in process, getting cleaned.\n");
+    //     struct request *temp = requestClean;
+    //     free(requestClean->outfile);
+    //     free(requestClean->args);
+    //     free(requestClean->logfile);
+    //     requestClean = requestClean->next;
+    //     free(temp);
+    // }
+
+    // Killing all child processes and allocated memory
+
+    while (add_memory_start != NULL)
+    {
+        struct pidMemoryInfo *temp = add_memory_start;
+        if (add_memory_start->active)
+        {
+            kill(add_memory_start->pid, SIGKILL);
+            time_t t = time(&t);
+            timePointer = timestamp();
+            printf("%s - SIGKILL sent to pid %d\n", timePointer, add_memory_start->pid);
+            free(timePointer);
+        }
+        //free(add_memory_start->timestamp);
+        add_memory_start = add_memory_start->next;
+        free(temp);
+    }
+
+    timePointer = timestamp();
+    printf("%s - Exiting overseer due to: CTRL^C\n", timePointer);
+    free(timePointer);
     exit(0);
 }
 
 int handle_request(struct request *a_request, int thread_id)
 {
+    mem_kill(5);
     // Debug
     printf("Thread %d handled request %d\n", thread_id, a_request->number);
     // retVal will contain the return value '-1' if execlp couldn't execute the program
@@ -227,8 +472,42 @@ int handle_request(struct request *a_request, int thread_id)
     int outFile = 0;
     int outFileFd = 0;
     int outFileFdErr = 0;
+    char *time = NULL;
     // Contains the filename of the log file. For some reason, this buffer is a workaround for a memory bug?..
     char logBuffer[MAX_BUFFER_SIZE];
+    if (strcmp(a_request->program, "mem") == 0)
+    {
+        printf("got mem\n");
+
+        //send(a_request->fd, "test123boi", MAX_BUFFER_SIZE, 0);
+        while (memory_mutex_activated)
+        {
+            pthread_cond_wait(&got_memory, &memory_mutex);
+        }
+        if (a_request->args != NULL)
+        {
+            send_pid_memory_info(a_request->fd, a_request->args);
+        }
+        else
+        {
+            send_memory_info(a_request->fd);
+        }
+
+        // Let the Overseer know that the job has finished
+        close(a_request->fd);
+        return 1;
+    }
+    else if(strcmp(a_request->program, "memkill") == 0)
+    {
+        printf("Memkill\n");
+    }
+    else
+    {
+        printf("Didn't match...\n");
+    }
+
+    // char *ptr = strtok(a_request->)
+
     if (a_request->logfile != NULL)
     {
         snprintf(logBuffer, sizeof(logBuffer), "%s", a_request->logfile[1]);
@@ -256,7 +535,7 @@ int handle_request(struct request *a_request, int thread_id)
         //int test = pthread_mutex_trylock(&file_mutex);
         //printf("%d\n", test);
         printf("Thread %d locked\n", thread_id);
-        sleep(2);
+        sleep(10);
         //printf("%p\n", a_request->logfile);
         // Duplicate stdout fd to be used for restoring stdout to the screen
         stdoutFd = dup(STDOUT_FILENO);
@@ -287,8 +566,9 @@ int handle_request(struct request *a_request, int thread_id)
         }
     }
 
-    fprintf(stdout, "%s - Attempting to execute '%s'...\n", timestamp(), a_request->program);
-
+    time = timestamp();
+    fprintf(stdout, "%s - Attempting to execute '%s'...\n", time, a_request->program);
+    free(time);
     if (a_request->logfile != NULL)
     {
         // Close the log file fd and return stdout to the screen
@@ -296,10 +576,7 @@ int handle_request(struct request *a_request, int thread_id)
         close(logFileFd);
         dup2(stdoutFd, STDOUT_FILENO);
         close(stdoutFd);
-        pthread_mutex_unlock(&file_mutex);
-        pthread_cond_signal(&got_file);
-        // printf("Thread %d unlocked\n", thread_id);
-        file_mutex_activated = false;
+        connection_msg_buffer_check();
     }
 
     // Create a fork before calling execlp so we don't replace the overseer with the program the client wishes to run!
@@ -364,10 +641,7 @@ int handle_request(struct request *a_request, int thread_id)
                 dup2(stderrFd, STDERR_FILENO);
                 close(stdoutFd);
                 close(stderrFd);
-                pthread_mutex_unlock(&file_mutex);
-                pthread_cond_signal(&got_file);
-                // printf("Thread %d unlocked\n", thread_id);
-                file_mutex_activated = false;
+                connection_msg_buffer_check();
             }
         }
         else
@@ -383,7 +657,8 @@ int handle_request(struct request *a_request, int thread_id)
                     pthread_cond_wait(&got_memory, &memory_mutex);
                 }
                 memory_mutex_activated = true;
-                manage_memory_info(pid, getProcMemoryInfo(pid, memoryRead));
+                sleep(0.2);
+                manage_memory_info(pid, getProcMemoryInfo(pid, memoryRead), a_request->program, a_request->numOfArgs, a_request->args);
                 memory_mutex_activated = false;
                 sleep(1);
             }
@@ -395,7 +670,7 @@ int handle_request(struct request *a_request, int thread_id)
                 pthread_cond_wait(&got_memory, &memory_mutex);
             }
             memory_mutex_activated = true;
-            manage_memory_info(pid, -1);
+            manage_memory_info(pid, -1, a_request->program, a_request->numOfArgs, a_request->args);
             memory_mutex_activated = false;
 
             while (file_mutex_activated)
@@ -458,11 +733,15 @@ int handle_request(struct request *a_request, int thread_id)
                     switch (term)
                     {
                     case 0: // Program terminated successfully.
-                        printf("%s - %d has been terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(SIGTERM));
+                        time = timestamp();
+                        printf("%s - %d has been terminated with status code %d\n", time, pid, WEXITSTATUS(SIGTERM));
+                        free(time);
                         break;
                     case -1: // If for some reason we cannot terminate the program by asking nicely.
                         sleep(5);
-                        printf("%s - sent SIGKILL to %d\n", timestamp(), pid);
+                        time = timestamp();
+                        printf("%s - sent SIGKILL to %d\n", time, pid);
+                        free(time);
                         term = kill(pid, SIGKILL);
                         break;
                     // Error handling
@@ -493,12 +772,16 @@ int handle_request(struct request *a_request, int thread_id)
                 {
                     if (retVal == -1)
                     {
-                        fprintf(stdout, "%s - Could not execute '%s'\n", timestamp(), a_request->program);
+                        time = timestamp();
+                        fprintf(stdout, "%s - Could not execute '%s'\n", time, a_request->program);
+                        free(time);
                     }
                     else
                     {
-                        fprintf(stdout, "%s - '%s' has been executed with PID %d\n", timestamp(), a_request->program, pid);
-                        fprintf(stdout, "%s - PID %d has terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(status));
+                        time = timestamp();
+                        fprintf(stdout, "%s - '%s' has been executed with PID %d\n", time, a_request->program, pid);
+                        fprintf(stdout, "%s - PID %d has terminated with status code %d\n", time, pid, WEXITSTATUS(status));
+                        free(time);
                     }
                 }
             }
@@ -508,12 +791,16 @@ int handle_request(struct request *a_request, int thread_id)
             {
                 if (retVal == -1)
                 {
-                    fprintf(stdout, "%s - Could not execute '%s'\n", timestamp(), a_request->program);
+                    time = timestamp();
+                    fprintf(stdout, "%s - Could not execute '%s'\n", time, a_request->program);
+                    free(time);
                 }
                 else
                 {
-                    fprintf(stdout, "%s - '%s' has been executed with PID %d\n", timestamp(), a_request->program, pid);
-                    fprintf(stdout, "%s - PID %d has terminated with status code %d\n", timestamp(), pid, WEXITSTATUS(status));
+                    time = timestamp();
+                    fprintf(stdout, "%s - '%s' has been executed with PID %d\n", time, a_request->program, pid);
+                    fprintf(stdout, "%s - PID %d has terminated with status code %d\n", time, pid, WEXITSTATUS(status));
+                    free(time);
                 }
             }
         }
@@ -531,10 +818,8 @@ int handle_request(struct request *a_request, int thread_id)
         close(logFileFd);
         dup2(stdoutFd, STDOUT_FILENO);
         close(stdoutFd);
-        pthread_mutex_unlock(&file_mutex);
-        pthread_cond_signal(&got_file);
         printf("Thread %d unlocked\n", thread_id);
-        file_mutex_activated = false;
+        connection_msg_buffer_check();
     }
 
     // Let the Overseer know that the job has finished
@@ -544,6 +829,8 @@ int handle_request(struct request *a_request, int thread_id)
 
 void *handle_requests_loop(void *data)
 {
+    // When overseer is killed, need to ensure that all threads will cancel and join once they are finished their job
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
     struct request *a_request;
     int thread_id = *((int *)data);
     // Debug info
@@ -552,7 +839,6 @@ void *handle_requests_loop(void *data)
 
     while (1)
     {
-        // sleep(1);
         if (num_requests > 0)
         {
             // Debug info
@@ -562,25 +848,34 @@ void *handle_requests_loop(void *data)
             {
                 pthread_mutex_unlock(&request_mutex);
                 handle_request(a_request, thread_id);
+                free(a_request->outfile);
+                free(a_request->args);
+                free(a_request->logfile);
                 free(a_request);
                 //pthread_mutex_lock(&request_mutex);
             }
         }
         else
         {
-            // Debug info
-            if (thread_id == 0)
-            {
-                struct pidMemoryInfo *memtest = add_memory_start;
+            // Debug info (This is how you can get all memory info)
+            // if (thread_id == 0)
+            // {
+            //     struct pidMemoryInfo *memtest = add_memory_start;
 
-                while (memtest != NULL)
-                {
-                    printf("%s | PID: %d | Memory: %d | Active: %d\n", memtest->timestamp, memtest->pid, memtest->memory, memtest->active);
-                    memtest = memtest->next;
-                }
+            //     while (memtest != NULL)
+            //     {
+            //         printf("Num of history items: %d\n", memtest->historyCounter);
+            //         //struct pidHistory *history = add_memory_start->history_start;
+            //         while (memtest->history_start != NULL)
+            //         {
+            //             printf("%s | PID: %d | Memory: %d | Active: %d\n", memtest->history_start->timestamp, memtest->pid, memtest->history_start->memory, memtest->active);
+            //             memtest->history_start = memtest->history_start->next;
+            //         }
+            //         memtest = memtest->next;
+            //     }
 
-                memtest = add_memory_start;
-            }
+            //     memtest = add_memory_start;
+            // }
             printf("Thread ID: %d - No requests\n", thread_id);
             pthread_cond_wait(&got_request, &request_mutex);
         }
@@ -590,8 +885,6 @@ void *handle_requests_loop(void *data)
 int main(int argc, char *argv[])
 {
     signal(SIGINT, exit_handler); // PART D (Do not remove)
-    // threading cleanup (man prctl)
-    // prctl(PR_SET_PDEATHSIG, SIGHUP);z
     // Setting up distributed system server
     if (argc != 2)
     {
@@ -642,13 +935,9 @@ int main(int argc, char *argv[])
 
     struct sockaddr_in their_addr;
     socklen_t sin_size;
-    int new_fd;
 
     printf("Server successfully setup\n");
     printf("Now listening for requests...\n\n");
-
-    // Setting up thread pool
-    pthread_t p_threads[NUM_HANDLER_THREADS];
 
     pthread_mutex_init(&request_mutex, NULL);
     pthread_cond_init(&got_request, NULL);
@@ -669,12 +958,13 @@ int main(int argc, char *argv[])
     }
 
     int request_counter = 0;
-
+    char *time = NULL;
     while (1)
     {
         sin_size = sizeof(struct sockaddr_in);
-        if ((new_fd = accept(sockfd, (struct sockaddr *)&their_addr,
-                             &sin_size)) == -1)
+        new_fd = accept(sockfd, (struct sockaddr *)&their_addr,
+                        &sin_size);
+        if (new_fd == -1)
         {
             perror("accept");
             continue;
@@ -682,66 +972,25 @@ int main(int argc, char *argv[])
         else
         {
             // Connection from a client was successfully made to the overseer!
-            if (file_mutex_activated)
+            // If a thread is currently re-directing stdout, connection messages will get stored in a buffer
+            // then printed out to stdout once the logging to the thread's out/log file is finished.
+            // Otherwise, it will log to stdout!
+            if (file_mutex_activated == true)
             {
-                snprintf(new_connection_buffer, sizeof(new_connection_buffer), "%s - Connection received from %s\n", timestamp(), inet_ntoa(their_addr.sin_addr));
+                char msg[CONNECT_MSG_BUFFER_SIZE];
+                time = timestamp();
+                snprintf(msg, sizeof(msg), "%s - Connection received from %s\n", time, inet_ntoa(their_addr.sin_addr));
+                free(time);
+                connectionMsgBuffer[msgBufferCounter] = malloc(CONNECT_MSG_BUFFER_SIZE * sizeof(char));
+                strcpy(connectionMsgBuffer[msgBufferCounter], msg);
+                msgBufferCounter++;
+                msgBufferPointer++;
             }
             else
             {
-                fprintf(stdout, "%s - Connection received from %s\n", timestamp(), inet_ntoa(their_addr.sin_addr));
-            }
-
-            char **outfileArg = NULL;
-            char **logfileArg = NULL;
-
-            int index = 0;
-            char temp[MAX_BUFFER_SIZE];
-            if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
-            {
-                perror("recv");
-                exit(1);
-            }
-            temp[MAX_BUFFER_SIZE - 1] = 0;
-
-            if (temp[0] != '\0')
-            {
-                char *token = strtok(temp, " ");
-                while (token != NULL)
-                {
-                    outfileArg = realloc(outfileArg, sizeof(char *) * index);
-                    outfileArg[index] = token;
-                    token = strtok(NULL, " ");
-                    index++;
-                }
-                outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
-                outfileArg[index] = 0;
-            }
-
-            // Log FILE
-            int indexLog = 0;
-            char tempLog[MAX_BUFFER_SIZE];
-            tempLog[0] = '\0';
-
-            if (recv(new_fd, &tempLog, MAX_BUFFER_SIZE, 0) == -1)
-            {
-                perror("recv");
-                exit(1);
-            }
-            tempLog[MAX_BUFFER_SIZE] = 0;
-
-            if (tempLog[0] != '\0')
-            {
-                // Take the first char to SPACE, then place the string into a char[]
-                char *tokenLog = strtok(tempLog, " ");
-                while (tokenLog != NULL)
-                {
-                    logfileArg = realloc(logfileArg, sizeof(char *) * indexLog);
-                    logfileArg[indexLog] = tokenLog;
-                    tokenLog = strtok(NULL, " ");
-                    indexLog++;
-                }
-                logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
-                logfileArg[indexLog] = 0;
+                time = timestamp();
+                fprintf(stdout, "%s - Connection received from %s\n", time, inet_ntoa(their_addr.sin_addr));
+                free(time);
             }
 
             char programBuffer[MAX_BUFFER_SIZE];
@@ -753,41 +1002,155 @@ int main(int argc, char *argv[])
             }
             programBuffer[MAX_BUFFER_SIZE] = '\0';
 
-            char argsBuffer[MAX_BUFFER_SIZE];
-            if (recv(new_fd, &argsBuffer, MAX_BUFFER_SIZE, 0) == -1)
+            printf("%s\n", programBuffer);
+
+            if(strcmp(programBuffer, "memkill") == 0)
             {
-                perror("recv");
-                exit(1);
+                printf("\nGot memkill\n");
             }
-            argsBuffer[MAX_BUFFER_SIZE] = '\0';
-
-            // Below splits argsBuffer into substrings from it's original string (args come from client as one string)
-            char **args = NULL;
-            char *p = strtok(argsBuffer, " ");
-            int spaces = 0;
-
-            while (p != NULL)
+            
+            if (strcmp(programBuffer, "mem") == 0)
             {
-                spaces++;
-                args = realloc(args, sizeof(char *) * spaces);
-                if (args == NULL)
+                printf("\nGot mem\n");
+                uint16_t test;
+
+                if (recv(new_fd, &test, sizeof(uint16_t), 0) == -1)
                 {
-                    // Break out if realloc fails. Probably will need to set the args list to NULL to send zero args for the sake of it I guess
-                    break;
+                    perror("recv");
+                    exit(1);
                 }
-                args[spaces - 1] = p;
-                p = strtok(NULL, " ");
+                test = ntohs(test);
+
+                if (test == 0)
+                {
+                    add_request(request_counter, new_fd, programBuffer, 0, NULL, NULL, NULL, &request_mutex, &got_request);
+                    request_counter++;
+                }
+                else
+                {
+                    char **args = NULL;
+                    char argsBuffer[MAX_BUFFER_SIZE];
+                    if (recv(new_fd, &argsBuffer, MAX_BUFFER_SIZE, 0) == -1)
+                    {
+                        perror("recv");
+                        exit(1);
+                    }
+                    argsBuffer[MAX_BUFFER_SIZE] = '\0';
+                    //args[0] = malloc(sizeof(argsBuffer) * sizeof(char));
+                    char *p = strtok(argsBuffer, " ");
+                    int spaces = 0;
+
+                    while (p != NULL)
+                    {
+                        spaces++;
+                        args = realloc(args, sizeof(char *) * spaces);
+                        if (args == NULL)
+                        {
+                            // Break out if realloc fails. Probably will need to set the args list to NULL to send zero args for the sake of it I guess
+                            break;
+                        }
+                        args[spaces - 1] = p;
+                        p = strtok(NULL, " ");
+                    }
+
+                    // Add space for NULL char in args list
+                    args = realloc(args, sizeof(char *) * (spaces + 1));
+                    args[spaces] = 0;
+                    add_request(request_counter, new_fd, programBuffer, 1, args, NULL, NULL, &request_mutex, &got_request);
+                    request_counter++;
+                }
             }
+            else
+            {
+                char argsBuffer[MAX_BUFFER_SIZE];
+                if (recv(new_fd, &argsBuffer, MAX_BUFFER_SIZE, 0) == -1)
+                {
+                    perror("recv");
+                    exit(1);
+                }
+                argsBuffer[MAX_BUFFER_SIZE] = '\0';
 
-            // Add space for NULL char in args list
-            args = realloc(args, sizeof(char *) * (spaces + 1));
-            args[spaces] = 0;
+                // Below splits argsBuffer into substrings from it's original string (args come from client as one string)
+                char **args = NULL;
+                char *p = strtok(argsBuffer, " ");
+                int spaces = 0;
 
-            // Debug memory
-            //printf("%p\n", &logfileArg);
+                while (p != NULL)
+                {
+                    spaces++;
+                    args = realloc(args, sizeof(char *) * spaces);
+                    if (args == NULL)
+                    {
+                        // Break out if realloc fails. Probably will need to set the args list to NULL to send zero args for the sake of it I guess
+                        break;
+                    }
+                    args[spaces - 1] = p;
+                    p = strtok(NULL, " ");
+                }
 
-            add_request(request_counter, new_fd, programBuffer, args, outfileArg, logfileArg, &request_mutex, &got_request);
-            request_counter++;
+                // Add space for NULL char in args list
+                args = realloc(args, sizeof(char *) * (spaces + 1));
+                args[spaces] = 0;
+
+                char **outfileArg = NULL;
+                char **logfileArg = NULL;
+
+                int index = 0;
+                char temp[MAX_BUFFER_SIZE];
+                if (recv(new_fd, &temp, MAX_BUFFER_SIZE, 0) == -1)
+                {
+                    perror("recv");
+                    exit(1);
+                }
+                temp[MAX_BUFFER_SIZE - 1] = 0;
+
+                if (temp[0] != '\0')
+                {
+                    char *token = strtok(temp, " ");
+                    while (token != NULL)
+                    {
+                        outfileArg = realloc(outfileArg, sizeof(char *) * index);
+                        outfileArg[index] = token;
+                        token = strtok(NULL, " ");
+                        index++;
+                    }
+                    outfileArg = realloc(outfileArg, sizeof(char *) * (index + 1));
+                    outfileArg[index] = 0;
+                }
+
+                // Log FILE
+                int indexLog = 0;
+                char tempLog[MAX_BUFFER_SIZE];
+                tempLog[0] = '\0';
+
+                if (recv(new_fd, &tempLog, MAX_BUFFER_SIZE, 0) == -1)
+                {
+                    perror("recv");
+                    exit(1);
+                }
+                tempLog[MAX_BUFFER_SIZE] = 0;
+
+                if (tempLog[0] != '\0')
+                {
+                    // Take the first char to SPACE, then place the string into a char[]
+                    char *tokenLog = strtok(tempLog, " ");
+                    while (tokenLog != NULL)
+                    {
+                        logfileArg = realloc(logfileArg, sizeof(char *) * indexLog);
+                        logfileArg[indexLog] = tokenLog;
+                        tokenLog = strtok(NULL, " ");
+                        indexLog++;
+                    }
+                    logfileArg = realloc(logfileArg, sizeof(char *) * (indexLog + 1));
+                    logfileArg[indexLog] = 0;
+                }
+
+                // Debug memory
+                //printf("%p\n", &logfileArg);
+
+                add_request(request_counter, new_fd, programBuffer, spaces, args, outfileArg, logfileArg, &request_mutex, &got_request);
+                request_counter++;
+            }
         }
     }
 
