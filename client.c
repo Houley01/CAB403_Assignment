@@ -187,10 +187,6 @@ int main(int argc, char *argv[])
 
         if (strcmp(program, "mem") == 0)
         {
-            // if (strcmp(args, ""))
-            // {
-            //     printf("yessss\n");
-            // }
             send(sockfd, program, MAX_BUFFER_SIZE, 0);
             fflush(stdout);
             sleep(0.3);
@@ -235,6 +231,7 @@ int main(int argc, char *argv[])
                 numOfHistoryItems--;
             }
         }
+        else
         {
             send(sockfd, program, MAX_BUFFER_SIZE, 0);
             fflush(stdout);
@@ -245,6 +242,7 @@ int main(int argc, char *argv[])
             // Output file sending data
             send(sockfd, argsOutFile, MAX_BUFFER_SIZE, 0);
             fflush(stdout);
+
             // Log file sending data
             send(sockfd, argsLogFile, MAX_BUFFER_SIZE, 0);
             fflush(stdout);

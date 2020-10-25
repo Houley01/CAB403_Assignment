@@ -160,10 +160,14 @@ void send_memory_info(int fd)
     memory_mutex_activated = false;
 }
 
-void mem_kill(int amount)
+void mem_kill(char **amount)
 {
+    printf("mem kill args %s\n", amount[0]);
     struct sysinfo sys_info;
-    if(sysinfo(&sys_info) != 0) perror("sysinfo");
+    if (sysinfo(&sys_info) != 0)
+        perror("sysinfo");
+
+    int percentage = atoi(amount[0]);
 
     struct pidMemoryInfo *temp = add_memory_start;
     while (temp != NULL)
@@ -171,13 +175,14 @@ void mem_kill(int amount)
         if (temp->active)
         {
             unsigned long process_mem = 0;
-            while(temp->history_start != NULL)
+            while (temp->history_start != NULL && temp->active)
             {
                 process_mem += temp->history_start->memory;
                 unsigned long ram = sys_info.totalram;
-                double memory_percent = (double)process_mem / (double)ram * 100;
-                // printf("Mem: %lf - Amount: %d\n", memory_percent, amount);
-                if((double)amount <= memory_percent)
+                // debug ADDED + 10 TO CHECK 10% OF MEMORY TO SIGKILL
+                double memory_percent = ((double)process_mem / (double)ram * 100) + 10;
+                //printf("Mem: %lf - Amount: %d\n", memory_percent, percentage);
+                if ((double)percentage <= memory_percent)
                 {
                     kill(temp->pid, SIGKILL);
                     char *timePointer = timestamp();
@@ -459,7 +464,7 @@ void exit_handler(int SIG)
 
 int handle_request(struct request *a_request, int thread_id)
 {
-    mem_kill(5);
+    //mem_kill(5);
     // Debug
     printf("Thread %d handled request %d\n", thread_id, a_request->number);
     // retVal will contain the return value '-1' if execlp couldn't execute the program
@@ -497,9 +502,13 @@ int handle_request(struct request *a_request, int thread_id)
         close(a_request->fd);
         return 1;
     }
-    else if(strcmp(a_request->program, "memkill") == 0)
+    else if (strcmp(a_request->program, "memkill") == 0)
     {
         printf("Memkill\n");
+        mem_kill(a_request->args);
+        // Let the Overseer know that the job has finished
+        close(a_request->fd);
+        return 1;
     }
     else
     {
@@ -1004,11 +1013,11 @@ int main(int argc, char *argv[])
 
             printf("%s\n", programBuffer);
 
-            if(strcmp(programBuffer, "memkill") == 0)
+            if (strcmp(programBuffer, "memkill") == 0)
             {
                 printf("\nGot memkill\n");
             }
-            
+
             if (strcmp(programBuffer, "mem") == 0)
             {
                 uint16_t test;
