@@ -106,6 +106,9 @@ void send_pid_memory_info(int fd, char **pid)
             int sendMemory = 0;
             char memoryInfo[MAX_BUFFER_SIZE];
             int pidArg = atoi(pid[0]);
+
+            // Logging to linked list
+
             while (memtest->history_start != NULL && pidArg)
             {
                 strcpy(sendTime, memtest->history_start->timestamp);
@@ -135,17 +138,6 @@ void send_memory_info(int fd)
     send(fd, &pidCountBuffer, sizeof(uint16_t), 0);
     while (memtest != NULL)
     {
-        // Below is suited for getting info from specific pid since we need to know all the history
-        //printf("Num of history items: %d\n", memtest->historyCounter);
-        //struct pidHistory *history = add_memory_start->history_start;
-        // char sendTime[20];
-        // int sendMemory = 0;
-        // while (memtest->history_start != NULL)
-        // {
-        //     strcpy(sendTime, memtest->history_start->timestamp);
-        //     sendMemory = memtest->history_start->memory;
-        //     memtest->history_start = memtest->history_start->next;
-        // }
         if (memtest->active == true)
         {
             char memoryInfo[MAX_BUFFER_SIZE];
@@ -160,9 +152,10 @@ void send_memory_info(int fd)
     memory_mutex_activated = false;
 }
 
+// When the client requests to kill any process
+// using x% of total system memory
 void mem_kill(char **amount)
 {
-    printf("mem kill args %s\n", amount[0]);
     struct sysinfo sys_info;
     if (sysinfo(&sys_info) != 0)
         perror("sysinfo");
@@ -174,14 +167,12 @@ void mem_kill(char **amount)
     {
         if (temp->active)
         {
-            unsigned long process_mem = 0;
             while (temp->history_start != NULL && temp->active)
             {
-                process_mem += temp->history_start->memory;
+                unsigned long process_mem = temp->history_end->memory;
                 unsigned long ram = sys_info.totalram;
-                // debug ADDED + 10 TO CHECK 10% OF MEMORY TO SIGKILL
-                double memory_percent = ((double)process_mem / (double)ram * 100) + 10;
-                //printf("Mem: %lf - Amount: %d\n", memory_percent, percentage);
+                double memory_percent = ((double)process_mem / (double)ram * 100);
+
                 if ((double)percentage <= memory_percent)
                 {
                     kill(temp->pid, SIGKILL);
@@ -197,6 +188,7 @@ void mem_kill(char **amount)
         temp = temp->next;
     }
     free(temp);
+    free(amount);
 }
 
 // If a request is performing redirection to an out/log file, once it has finished,
@@ -423,21 +415,6 @@ void exit_handler(int SIG)
     sleep(2);
 
     char *timePointer = NULL;
-
-    // Not too sure how to clean up the requests when the list actively moves
-    // Maybe checking all threads to see if they're running jobs + the global list is the only way
-    // struct request *requestClean = requestsCurrent;
-    // while (requestClean != NULL)
-    // {
-    //     printf("Request in process, getting cleaned.\n");
-    //     struct request *temp = requestClean;
-    //     free(requestClean->outfile);
-    //     free(requestClean->args);
-    //     free(requestClean->logfile);
-    //     requestClean = requestClean->next;
-    //     free(temp);
-    // }
-
     // Killing all child processes and allocated memory
 
     while (add_memory_start != NULL)
@@ -851,7 +828,6 @@ void *handle_requests_loop(void *data)
         if (num_requests > 0)
         {
             // Debug info
-            //printf("Thread ID: %d - Requests in list: %d\n", thread_id, num_requests);
             a_request = get_request();
             if (a_request)
             {
@@ -861,30 +837,10 @@ void *handle_requests_loop(void *data)
                 free(a_request->args);
                 free(a_request->logfile);
                 free(a_request);
-                //pthread_mutex_lock(&request_mutex);
             }
         }
         else
         {
-            // Debug info (This is how you can get all memory info)
-            // if (thread_id == 0)
-            // {
-            //     struct pidMemoryInfo *memtest = add_memory_start;
-
-            //     while (memtest != NULL)
-            //     {
-            //         printf("Num of history items: %d\n", memtest->historyCounter);
-            //         //struct pidHistory *history = add_memory_start->history_start;
-            //         while (memtest->history_start != NULL)
-            //         {
-            //             printf("%s | PID: %d | Memory: %d | Active: %d\n", memtest->history_start->timestamp, memtest->pid, memtest->history_start->memory, memtest->active);
-            //             memtest->history_start = memtest->history_start->next;
-            //         }
-            //         memtest = memtest->next;
-            //     }
-
-            //     memtest = add_memory_start;
-            // }
             printf("Thread ID: %d - No requests\n", thread_id);
             pthread_cond_wait(&got_request, &request_mutex);
         }
@@ -1003,7 +959,6 @@ int main(int argc, char *argv[])
             }
 
             char programBuffer[MAX_BUFFER_SIZE];
-
             if (recv(new_fd, &programBuffer, MAX_BUFFER_SIZE, 0) == -1)
             {
                 perror("recv");
@@ -1039,10 +994,10 @@ int main(int argc, char *argv[])
                     char **args = NULL;
                     char argsBuffer[MAX_BUFFER_SIZE];
                     if (recv(new_fd, &argsBuffer, MAX_BUFFER_SIZE, 0) == -1)
-                    {
-                        perror("recv");
-                        exit(1);
-                    }
+                {
+                    perror("recv");
+                    exit(1);
+                }
                     argsBuffer[MAX_BUFFER_SIZE] = '\0';
                     //args[0] = malloc(sizeof(argsBuffer) * sizeof(char));
                     char *p = strtok(argsBuffer, " ");
